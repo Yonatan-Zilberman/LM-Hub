@@ -3,14 +3,17 @@ package build
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/yonatanzilberman/lmhub/internal/agent"
 	"github.com/yonatanzilberman/lmhub/internal/api"
 	"github.com/yonatanzilberman/lmhub/internal/config"
 	"github.com/yonatanzilberman/lmhub/internal/modelmanager"
+	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/safety"
 	"github.com/yonatanzilberman/lmhub/internal/tools"
 )
@@ -103,6 +106,21 @@ func (bm *BuildMode) SetSession(s *BuildSession) {
 	bm.session = s
 }
 
+// LoadPlan reads and parses a saved plan file.
+func (bm *BuildMode) LoadPlan(path string) (*plan.Plan, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read plan file: %w", err)
+	}
+
+	p, err := plan.ParsePlanJSON(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("parse plan: %w", err)
+	}
+
+	return p, nil
+}
+
 // ExecuteTask runs the ReAct loop in a non-blocking background goroutine.
 func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectContext, memoryFacts, gitStatus string, temp float64, maxToks int) {
 	if bm.session == nil {
@@ -112,10 +130,19 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 	go func() {
 		// First step: add the user task if history is empty
 		if len(bm.history) == 0 {
-			bm.history = append(bm.history, api.Message{
-				Role:    "user",
-				Content: task,
-			})
+			if bm.session.PlanRef != nil {
+				bm.session.SetCurrentStep(0)
+				step := bm.session.PlanRef.Steps[0]
+				bm.history = append(bm.history, api.Message{
+					Role:    "user",
+					Content: fmt.Sprintf("Please execute Step 1 of our plan:\nDescription: %s\nTarget: %s", step.Description, step.Target),
+				})
+			} else {
+				bm.history = append(bm.history, api.Message{
+					Role:    "user",
+					Content: task,
+				})
+			}
 		}
 
 		for {
@@ -303,6 +330,51 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 					Role:    "assistant",
 					Content: fullResponse,
 				})
+
+				if bm.session.PlanRef != nil {
+					currentIdx := bm.session.GetCurrentStep()
+					if currentIdx < len(bm.session.PlanRef.Steps)-1 {
+						nextIdx := currentIdx + 1
+						nextStep := bm.session.PlanRef.Steps[nextIdx]
+
+						if nextStep.RequiresConfirm && bm.confirmCallback != nil {
+							bm.updateCallback(AgentStepMsg{
+								StepType:  "pause",
+								Content:   fmt.Sprintf("Step %d completed. Requesting confirmation to proceed to Step %d...", currentIdx+1, nextIdx+1),
+								Iteration: iter,
+							})
+
+							ch := make(chan bool, 1)
+							confirmMsg := safety.ConfirmMsg{
+								ToolName:     "next_plan_step",
+								Description:  fmt.Sprintf("Proceed to next step: %s?", nextStep.Description),
+								ResponseChan: ch,
+							}
+							go func() {
+								ch <- bm.confirmCallback(confirmMsg)
+							}()
+
+							approved := <-ch
+							if !approved {
+								bm.updateCallback(AgentStepMsg{
+									StepType: "finished",
+									Content:  "Plan execution paused by user.",
+									Done:     true,
+								})
+								return
+							}
+						}
+
+						bm.session.SetCurrentStep(nextIdx)
+						bm.history = append(bm.history, api.Message{
+							Role:    "user",
+							Content: fmt.Sprintf("Step %d completed. Now proceed to Step %d:\nDescription: %s\nTarget: %s", currentIdx+1, nextIdx+1, nextStep.Description, nextStep.Target),
+						})
+						bm.session.IncrementIteration()
+						continue
+					}
+				}
+
 				bm.updateCallback(AgentStepMsg{
 					StepType: "finished",
 					Content:  fullResponse,
@@ -339,15 +411,38 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 			// Apply Safety Check / Classification
 			level := bm.classifier.Classify(toolInstance, tc.Args)
 			targetDesc := fmt.Sprintf("Execute %s with parameters %v", tc.Name, tc.Args)
-			if tc.Name == "write_file" {
+			switch tc.Name {
+			case "write_file":
 				targetDesc = fmt.Sprintf("Write content to %s", tc.Args["path"])
-			} else if tc.Name == "run_command" {
+			case "run_command":
 				targetDesc = fmt.Sprintf("Run shell command: %s", tc.Args["cmd"])
 			}
 
 			// Handle User Confirmation
 			requireConfirm := (level == tools.Dangerous && bm.cfg.Safety.RequireConfirmDangerous) ||
-				(level == tools.Warn && bm.cfg.Safety.RequireConfirmWarn)
+				(level == tools.Warn && bm.cfg.Safety.RequireConfirmWarn) ||
+				(tc.Name == "write_file" && bm.cfg.Safety.ShowDiffBeforeWrite)
+
+			var diffStr string
+			if tc.Name == "write_file" && bm.cfg.Safety.ShowDiffBeforeWrite {
+				pathVal, _ := tc.Args["path"].(string)
+				resolvedPath, pathErr := tools.PathInScope(pathVal, bm.session.ScopeRoot)
+				if pathErr == nil {
+					var oldData []byte
+					if _, err := os.Stat(resolvedPath); err == nil {
+						oldData, _ = os.ReadFile(resolvedPath)
+					}
+					newData, _ := tc.Args["content"].(string)
+					diff := difflib.UnifiedDiff{
+						A:        difflib.SplitLines(string(oldData)),
+						B:        difflib.SplitLines(newData),
+						FromFile: "original",
+						ToFile:   "proposed",
+						Context:  3,
+					}
+					diffStr, _ = difflib.GetUnifiedDiffString(diff)
+				}
+			}
 
 			if requireConfirm && bm.confirmCallback != nil {
 				bm.updateCallback(AgentStepMsg{
@@ -362,6 +457,7 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 					Args:         tc.Args,
 					Level:        level,
 					Description:  targetDesc,
+					Diff:         diffStr,
 					ResponseChan: ch,
 				}
 

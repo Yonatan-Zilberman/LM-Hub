@@ -77,6 +77,9 @@ type App struct {
 	showUndoHistory bool
 	undoHistoryView *views.UndoHistoryView
 
+	// Warning banners
+	parseWarningMsg string
+
 	width  int
 	height int
 }
@@ -111,6 +114,29 @@ func NewApp(
 	reg.Register(tools.NewSearchFilesTool(projectRoot))
 	reg.Register(tools.NewRunCommandTool(projectRoot, cfg.Tools.Shell.TimeoutSeconds, cfg.Tools.Shell.AllowedShells, cfg.Tools.Shell.Blocklist))
 
+	// Git tools
+	reg.Register(tools.NewGitStatusTool(projectRoot))
+	reg.Register(tools.NewGitDiffTool(projectRoot))
+	reg.Register(tools.NewGitAddTool(projectRoot))
+	reg.Register(tools.NewGitRestoreStagedTool(projectRoot))
+	reg.Register(tools.NewGitCommitTool(projectRoot))
+	reg.Register(tools.NewGitResetCommitTool(projectRoot))
+	reg.Register(tools.NewGitLogTool(projectRoot))
+	reg.Register(tools.NewGitBranchTool(projectRoot))
+	reg.Register(tools.NewGitStashTool(projectRoot))
+
+	// Docker tools
+	reg.Register(tools.NewDockerPSTool(projectRoot, cfg.Tools.Docker.Socket))
+	reg.Register(tools.NewDockerLogsTool(projectRoot, cfg.Tools.Docker.Socket))
+	reg.Register(tools.NewDockerExecTool(projectRoot, cfg.Tools.Docker.Socket))
+	reg.Register(tools.NewDockerBuildTool(projectRoot, cfg.Tools.Docker.Socket))
+	reg.Register(tools.NewDockerComposeTool(projectRoot))
+	reg.Register(tools.NewDockerPullTool(projectRoot, cfg.Tools.Docker.Socket))
+
+	// Web tools
+	reg.Register(tools.NewWebSearchTool(cfg.Tools.Web.SearchProvider, cfg.Tools.Web.SerperAPIKey))
+	reg.Register(tools.NewWebFetchTool(cfg.Tools.Web.FetchTimeoutSeconds, cfg.Tools.Web.CacheTTLMinutes))
+
 	buildMode := build.NewBuildMode(client, mm, cm, bm, cfg, reg, nil, nil)
 	buildView, err := views.NewBuildView(buildMode)
 	if err != nil {
@@ -143,6 +169,10 @@ func NewApp(
 		app.confirmMsg = msg
 		app.confirmView = views.NewConfirmView(msg)
 		app.showConfirm = true
+
+		if msg.Diff != "" {
+			app.buildView.SetDiff(msg.Diff)
+		}
 
 		// Wait blocks the background execution loop until user sets the channel response
 		approved := <-msg.ResponseChan
@@ -304,6 +334,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.planChatView.Reset()
 
 	case tea.KeyMsg:
+		if a.parseWarningMsg != "" {
+			a.parseWarningMsg = ""
+		}
 		if a.isLoadingModel {
 			break
 		}
@@ -396,6 +429,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 
 	case build.AgentStepMsg:
+		if agent.GlobalParseMetrics.ShouldWarn() {
+			a.parseWarningMsg = fmt.Sprintf("Model %s is producing unreliable tool calls (3+ consecutive failures). Consider switching models.", a.selectedModelID)
+		}
 		gitStatus := ""
 		projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
 		cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, "")
@@ -580,11 +616,31 @@ func (a *App) View() string {
 	sBar := a.statusBar.Render(activeModeStr, loadedID, m.RAMUsedGB, speed, a.isOnline)
 
 	// Combine components
-	res := lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		"\n",
-		content,
-	)
+	var res string
+	if a.parseWarningMsg != "" {
+		bannerStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#121212")).
+			Background(theme.WarningColor).
+			Padding(0, 1)
+		if a.width > 0 {
+			bannerStyle = bannerStyle.Width(a.width)
+		}
+		banner := bannerStyle.Render("⚠️  " + a.parseWarningMsg + " (Press any key to dismiss)")
+		res = lipgloss.JoinVertical(lipgloss.Left,
+			header,
+			"\n",
+			banner,
+			"\n",
+			content,
+		)
+	} else {
+		res = lipgloss.JoinVertical(lipgloss.Left,
+			header,
+			"\n",
+			content,
+		)
+	}
 
 	// Make sure the screen layout fits window height nicely
 	remainingNewlines := a.height - lipgloss.Height(res) - lipgloss.Height(ctxBar) - lipgloss.Height(sBar) - 2

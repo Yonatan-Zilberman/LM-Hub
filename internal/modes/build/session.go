@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/tools"
 )
 
@@ -37,6 +38,8 @@ type BuildSession struct {
 	MaxIterations   int               `json:"max_iterations"`
 	StartedAt       time.Time         `json:"started_at"`
 	UndoStack       *tools.UndoStack  `json:"-"`
+	PlanRef         *plan.Plan        `json:"-"`
+	CurrentStep     int               `json:"current_step"`
 }
 
 // NewBuildSession creates a new initialized build session.
@@ -46,6 +49,7 @@ func NewBuildSession(scopeRoot string, maxIterations int) *BuildSession {
 		MaxIterations: maxIterations,
 		StartedAt:     time.Now(),
 		UndoStack:     tools.NewUndoStack(),
+		CurrentStep:   -1,
 	}
 }
 
@@ -134,4 +138,33 @@ func (s *BuildSession) GetToolCallHistory() []ToolCallRecord {
 	copyList := make([]ToolCallRecord, len(s.ToolCallHistory))
 	copy(copyList, s.ToolCallHistory)
 	return copyList
+}
+
+// SetPlan sets the loaded plan for this session.
+func (s *BuildSession) SetPlan(p *plan.Plan) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.PlanRef = p
+	s.CurrentStep = 0
+}
+
+// GetPlan returns the loaded plan.
+func (s *BuildSession) GetPlan() *plan.Plan {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.PlanRef
+}
+
+// SetCurrentStep updates the active plan step index.
+func (s *BuildSession) SetCurrentStep(idx int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.CurrentStep = idx
+}
+
+// GetCurrentStep returns the active plan step index.
+func (s *BuildSession) GetCurrentStep() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.CurrentStep
 }

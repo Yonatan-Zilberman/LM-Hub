@@ -28,6 +28,27 @@ func (c *Classifier) Classify(t tools.Tool, args map[string]interface{}) tools.P
 			}
 		}
 	}
+
+	if t.Name() == "git_branch" {
+		action, _ := args["action"].(string)
+		switch action {
+		case "delete":
+			return tools.Dangerous
+		case "create", "switch":
+			return tools.Warn
+		default:
+			return tools.Safe
+		}
+	}
+
+	if t.Name() == "docker_compose" {
+		action, _ := args["action"].(string)
+		if action == "down" {
+			return tools.Dangerous
+		}
+		return tools.Warn
+	}
+
 	return t.Permission()
 }
 

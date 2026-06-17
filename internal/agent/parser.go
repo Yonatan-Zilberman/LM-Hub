@@ -4,9 +4,57 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/yonatanzilberman/lmhub/internal/api"
 )
+
+// ParseMetrics tracks tool call parsing successes and failures.
+type ParseMetrics struct {
+	mu                  sync.Mutex
+	TotalAttempts       int
+	SuccessCount        int
+	FailureCount        int
+	ConsecutiveFailures int
+}
+
+// RecordSuccess registers a successful parsing attempt.
+func (pm *ParseMetrics) RecordSuccess() {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.TotalAttempts++
+	pm.SuccessCount++
+	pm.ConsecutiveFailures = 0
+}
+
+// RecordFailure registers a failed parsing attempt.
+func (pm *ParseMetrics) RecordFailure() {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.TotalAttempts++
+	pm.FailureCount++
+	pm.ConsecutiveFailures++
+}
+
+// ShouldWarn returns true if there have been 3 or more consecutive failures.
+func (pm *ParseMetrics) ShouldWarn() bool {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	return pm.ConsecutiveFailures >= 3
+}
+
+// Reset clears the metrics tracker.
+func (pm *ParseMetrics) Reset() {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.TotalAttempts = 0
+	pm.SuccessCount = 0
+	pm.FailureCount = 0
+	pm.ConsecutiveFailures = 0
+}
+
+// GlobalParseMetrics is the package-level instance of ParseMetrics.
+var GlobalParseMetrics = &ParseMetrics{}
 
 // ToolCall represents a structured call to an agent tool.
 type ToolCall struct {
@@ -39,6 +87,7 @@ func ParseToolCall(content string, nativeCalls []api.ToolCall) ([]ToolCall, erro
 				Args: args,
 			})
 		}
+		GlobalParseMetrics.RecordSuccess()
 		return tcs, nil
 	}
 
@@ -56,6 +105,7 @@ func ParseToolCall(content string, nativeCalls []api.ToolCall) ([]ToolCall, erro
 			}
 		}
 		if len(tcs) > 0 {
+			GlobalParseMetrics.RecordSuccess()
 			return tcs, nil
 		}
 	}
@@ -87,6 +137,7 @@ func ParseToolCall(content string, nativeCalls []api.ToolCall) ([]ToolCall, erro
 			}
 		}
 		if len(tcs) > 0 {
+			GlobalParseMetrics.RecordSuccess()
 			return tcs, nil
 		}
 	}
@@ -124,10 +175,12 @@ func ParseToolCall(content string, nativeCalls []api.ToolCall) ([]ToolCall, erro
 		}
 	}
 	if len(tcs) > 0 {
+		GlobalParseMetrics.RecordSuccess()
 		return tcs, nil
 	}
 
 	// Layer 5: Failure
+	GlobalParseMetrics.RecordFailure()
 	return nil, &ParseError{RawOutput: content}
 }
 

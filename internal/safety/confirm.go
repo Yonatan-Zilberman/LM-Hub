@@ -10,6 +10,7 @@ type ConfirmMsg struct {
 	Args         map[string]interface{} `json:"args"`
 	Level        tools.PermissionLevel  `json:"level"`
 	Description  string                 `json:"description"`
+	Diff         string                 `json:"diff,omitempty"`
 	ResponseChan chan bool              `json:"-"`
 }
 

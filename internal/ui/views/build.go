@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -35,6 +34,8 @@ func NextStepCmd(stream chan build.AgentStepMsg) tea.Cmd {
 type BuildView struct {
 	buildMode   *build.BuildMode
 	viewport    viewport.Model
+	diffView    components.DiffView
+	showDiff    bool
 	textInput   textinput.Model
 	renderer    *components.MarkdownRenderer
 	width       int
@@ -62,11 +63,15 @@ func NewBuildView(bm *build.BuildMode) (*BuildView, error) {
 	vp := viewport.New(40, 20)
 	vp.SetContent("Build mode ready. Describe a task to execute.")
 
+	dv := components.NewDiffView("", 40, 20)
+
 	return &BuildView{
 		buildMode: bm,
 		textInput: ti,
 		viewport:  vp,
 		renderer:  mr,
+		diffView:  dv,
+		showDiff:  false,
 	}, nil
 }
 
@@ -79,6 +84,9 @@ func (bv *BuildView) SetSize(w, h int) {
 	bv.viewport.Width = leftWidth
 	bv.viewport.Height = h - 10
 	bv.textInput.Width = w - 10
+
+	rightWidth := w - leftWidth - 4
+	bv.diffView.SetSize(rightWidth, h - 10)
 }
 
 // Reset clears active logs and session metrics.
@@ -89,6 +97,14 @@ func (bv *BuildView) Reset() {
 	bv.StatusLog = ""
 	bv.accumulatedThoughts.Reset()
 	bv.isStreaming = false
+	bv.showDiff = false
+	bv.diffView.SetContent("")
+}
+
+// SetDiff updates the diff viewer content and shows it.
+func (bv *BuildView) SetDiff(diffText string) {
+	bv.diffView.SetContent(diffText)
+	bv.showDiff = true
 }
 
 // Update handles UI and agent updates.
@@ -97,6 +113,11 @@ func (bv *BuildView) Update(msg tea.Msg, modelID string, gitStatus, projectConte
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.Type == tea.KeyCtrlD {
+			bv.showDiff = !bv.showDiff
+			break
+		}
+
 		if bv.isStreaming {
 			if msg.Type == tea.KeyCtrlC {
 				bv.isStreaming = false
@@ -142,8 +163,14 @@ func (bv *BuildView) Update(msg tea.Msg, modelID string, gitStatus, projectConte
 	cmds = append(cmds, tiCmd)
 
 	var vpCmd tea.Cmd
-	bv.viewport, vpCmd = bv.viewport.Update(msg)
-	cmds = append(cmds, vpCmd)
+	if !bv.showDiff {
+		bv.viewport, vpCmd = bv.viewport.Update(msg)
+		cmds = append(cmds, vpCmd)
+	} else {
+		var dvCmd tea.Cmd
+		bv.diffView, dvCmd = bv.diffView.Update(msg)
+		cmds = append(cmds, dvCmd)
+	}
 
 	return tea.Batch(cmds...), nil
 }
@@ -185,6 +212,11 @@ func (bv *BuildView) handleAgentStep(msg build.AgentStepMsg) {
 		bv.accumulatedThoughts.WriteString(fmt.Sprintf("📝 Result: *%s*\n", resultPreview))
 		bv.refreshViewport()
 
+		if msg.ToolName == "git_diff" {
+			bv.diffView.SetContent(msg.Content)
+			bv.showDiff = true
+		}
+
 	case "finished":
 		bv.accumulatedThoughts.WriteString("\n🏁 **Agent Finished**\n")
 		bv.refreshViewport()
@@ -215,37 +247,78 @@ func (bv *BuildView) renderToolActivity(width int) string {
 		return "No activity yet. Describe a task below to start building!"
 	}
 
-	history := session.GetToolCallHistory()
-	if len(history) == 0 {
-		return "Agent starting up..."
+	var sb strings.Builder
+	theme := styles.DefaultTheme
+
+	// 1. Session Scope & Stats Panel
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.PrimaryColor).Render("📊 SESSION METRICS\n"))
+	sb.WriteString(fmt.Sprintf("Scope: %s\n", session.ScopeRoot))
+	sb.WriteString(fmt.Sprintf("Iteration: %d/%d\n", session.GetIteration(), session.MaxIterations))
+
+	modifiedFiles := session.GetFilesModified()
+	sb.WriteString(fmt.Sprintf("Changed Files: %d\n", len(modifiedFiles)))
+	for _, f := range modifiedFiles {
+		sb.WriteString(fmt.Sprintf("  - %s\n", f))
+	}
+	sb.WriteString("\n")
+
+	// 2. Plan Progress Panel (if plan exists)
+	planRef := session.GetPlan()
+	if planRef != nil {
+		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.AccentColor).Render("📋 PLAN PROGRESS\n"))
+		sb.WriteString(fmt.Sprintf("Plan: %s\n", planRef.Title))
+		currentStep := session.GetCurrentStep()
+
+		// Render step-by-step progress
+		for i, step := range planRef.Steps {
+			statusSymbol := "○" // Pending
+			statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+			if i < currentStep {
+				statusSymbol = "✓" // Done
+				statusStyle = lipgloss.NewStyle().Foreground(theme.SuccessColor).Bold(true)
+			} else if i == currentStep {
+				statusSymbol = "➔" // Active
+				statusStyle = lipgloss.NewStyle().Foreground(theme.SecondaryColor).Bold(true)
+			}
+
+			sb.WriteString(statusStyle.Render(fmt.Sprintf("%s Step %d: %s\n", statusSymbol, i+1, step.Description)))
+		}
+		sb.WriteString("\n")
 	}
 
-	var sb strings.Builder
-	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(styles.DefaultTheme.AccentColor).Render("Tool Execution History\n\n"))
+	// 3. Tool Execution History Panel
+	history := session.GetToolCallHistory()
+	if len(history) > 0 {
+		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.AccentColor).Render("🛠️  TOOL HISTORY\n"))
+		for i, record := range history {
+			statusIcon := "✓"
+			statusColor := theme.SuccessColor
+			if strings.Contains(strings.ToLower(record.Result), "error") || strings.Contains(strings.ToLower(record.Result), "failed") {
+				statusIcon = "✗"
+				statusColor = theme.DangerColor
+			}
 
-	for i, record := range history {
-		statusIcon := "✓"
-		statusColor := styles.DefaultTheme.SuccessColor
-		if strings.Contains(strings.ToLower(record.Result), "error") || strings.Contains(strings.ToLower(record.Result), "failed") {
-			statusIcon = "✗"
-			statusColor = styles.DefaultTheme.DangerColor
+			statusStyled := lipgloss.NewStyle().Foreground(statusColor).Bold(true).Render(statusIcon)
+			undoText := ""
+			if record.Undoable {
+				undoText = lipgloss.NewStyle().Foreground(theme.SecondaryColor).Render(" [undo]")
+			}
+
+			sb.WriteString(fmt.Sprintf("[%d] %s %s%s\n", i+1, statusStyled, record.ToolName, undoText))
+
+			// Render targets/commands concisely
+			if path, ok := record.Args["path"].(string); ok {
+				sb.WriteString(fmt.Sprintf("    Path: %s\n", path))
+			} else if cmd, ok := record.Args["cmd"].(string); ok {
+				truncatedCmd := cmd
+				if len(truncatedCmd) > 30 {
+					truncatedCmd = truncatedCmd[:27] + "..."
+				}
+				sb.WriteString(fmt.Sprintf("    Cmd: %s\n", truncatedCmd))
+			}
 		}
-
-		statusStyled := lipgloss.NewStyle().Foreground(statusColor).Bold(true).Render(statusIcon)
-		undoText := ""
-		if record.Undoable {
-			undoText = lipgloss.NewStyle().Foreground(styles.DefaultTheme.SecondaryColor).Render(" [undoable]")
-		}
-
-		sb.WriteString(fmt.Sprintf("[%d] %s  %s%s\n", i+1, statusStyled, record.ToolName, undoText))
-
-		// Render targets
-		if path, ok := record.Args["path"].(string); ok {
-			sb.WriteString(fmt.Sprintf("    Target: %s\n", path))
-		} else if cmd, ok := record.Args["cmd"].(string); ok {
-			sb.WriteString(fmt.Sprintf("    Cmd: %s\n", cmd))
-		}
-		sb.WriteString(fmt.Sprintf("    Duration: %v\n\n", record.Duration.Round(time.Millisecond)))
+	} else {
+		sb.WriteString("No tool calls executed yet in this step.\n")
 	}
 
 	return sb.String()
@@ -261,16 +334,23 @@ func (bv *BuildView) View() string {
 	// Left panel chat content
 	leftBox := theme.BoxStyle.Width(leftWidth).Height(bv.height - 10).Render(bv.viewport.View())
 
-	// Right panel tool activity
-	activityText := bv.renderToolActivity(rightWidth)
-	// Make right panel scrollable or simple viewport
-	rightBox := theme.BoxStyle.Width(rightWidth).Height(bv.height - 10).Render(activityText)
+	// Right panel content (toggled between diff and tool activity)
+	var rightContent string
+	if bv.showDiff {
+		rightContent = bv.diffView.View()
+	} else {
+		rightContent = bv.renderToolActivity(rightWidth)
+	}
+	rightBox := theme.BoxStyle.Width(rightWidth).Height(bv.height - 10).Render(rightContent)
 
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftBox, rightBox)
 
 	statusText := ""
+	helpMsg := " [Ctrl+D] Toggle Diff"
 	if bv.StatusLog != "" {
-		statusText = theme.HelpStyle.Render("Status: " + bv.StatusLog)
+		statusText = theme.HelpStyle.Render("Status: " + bv.StatusLog + " | " + helpMsg)
+	} else {
+		statusText = theme.HelpStyle.Render(helpMsg)
 	}
 
 	inputBox := theme.BoxStyle.Width(bv.width - 4).Render(bv.textInput.View())

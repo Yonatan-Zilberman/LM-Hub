@@ -33,13 +33,22 @@ Any AI coding agent working on the LM Hub codebase **MUST** strictly adhere to t
 
 ## Current Status
 
-- **Current Phase**: Phase 3 — Build Mode Core + Undo
-- **Milestone**: Autonomous Build Mode loop, Safety Classifier, and Rollback engine fully functional
-- **Status**: All Phase 3 items completed. Full ReAct agent loop execution with streaming context updates and user confirmation gates is operational. Per-tool undo snapshots, sequential UndoHistory rollback list (`Ctrl+Z`), safety classifier (escalating blocklisted shell calls), 7 filesystem tools, and run_command tool are complete and passing all package unit tests.
+- **Current Phase**: Phase 4 — Build Mode Extended
+- **Milestone**: All tool families (Git, Docker, Web) operational, Diff Viewer, Plan→Build sequential execution, Tool activity panel wired, Parse warnings active.
+- **Status**: Completed Phase 4 implementation. Added pure-Go `go-git/v5` Git tools (status, diff, add, commit, log, branch, stash) with undo. Added Docker SDK tools (ps, logs, exec, build, compose, pull). Added Web tools (DuckDuckGo Search & Fetch). Configured split-screen interactive diff viewer (`Ctrl+D` toggle) and unified diff display in write confirmations. Completed sequential plan handoff execution. Integrated consecutive parse failure detection and dismissal warning banner. All unit tests pass cleanly.
 
 ---
 
 ## Progress Log
+
+### 2026-06-17 (Phase 4 Build Mode Extended Complete)
+- Implemented 7 core git tools with go-git backend and undo integration (`git_add` undo via staged restore, `git_commit` reset last commit).
+- Implemented 6 docker tools via official Docker SDK, compose wrapper, and offline sockets safety.
+- Implemented 2 web tools (DuckDuckGo instant search fallback scraper, goquery fetch cleanups, caching TTL).
+- Integrated `DiffView` scrollable viewport inside confirmation modals (`write_file` unified diff generation via `go-difflib`) and build session panels (`Ctrl+D` toggle key).
+- Completed Plan→Build sequential step loader and requires-confirm gates.
+- Implemented parse failure consecutive threshold tracker (3+ errors) and non-blocking dismissible warning banner.
+- Verified build compiles cleanly and all unit tests pass (100%).
 
 ### 2026-06-17 (Phase 3 Build Mode Core + Undo Complete)
 - Defined core `Tool`, `ToolResult`, and `UndoRecord` models (`internal/tools/types.go`).

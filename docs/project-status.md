@@ -6,7 +6,7 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 
 ## Active Status
 
-* **Current Phase**: Phase 3 Complete (Build Mode Core + Undo)
+* **Current Phase**: Phase 4 Complete (Build Mode Extended)
 * **Status**: Compilation is clean, all unit tests are passing.
 
 ---
@@ -30,26 +30,29 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 * [budget.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/agent/budget.go): Budget allocator that maps and limits context inputs dynamically based on priority (Project Context -> Memory -> RAG).
 * [projectctx.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/agent/projectctx.go): Loads `.lmhub/context.md` from the project root and truncates to budget limits.
 * [prompts.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/agent/prompts.go): Prompt templates for Ask, Plan, and Build modes.
-* [parser.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/agent/parser.go): Extracts tool calls from model output using a 5-layer fallback parsing strategy.
+* [parser.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/agent/parser.go): Extracts tool calls from model output using a 5-layer fallback parsing strategy with parsing failure metrics.
 
 ### `internal/modes/`
 * `ask/` - [mode.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/modes/ask/mode.go): Coordinates Ask stateful conversation chat loop.
 * `plan/` - [schema.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/modes/plan/schema.go) / [mode.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/modes/plan/mode.go): Coordinates Plan structured reasoning, JSON schema parser and validation, retry correction loop, and Gemma instruction safety injection.
-* `build/` - [mode.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/modes/build/mode.go) / [session.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/modes/build/session.go): Coordinates Build autonomous loop, updates updates callback, and tracks session state.
+* `build/` - [mode.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/modes/build/mode.go) / [session.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/modes/build/session.go): Coordinates Build autonomous loop, updates updates callback, tracks session state, and executes sequential plan steps.
 
 ### `internal/tools/`
 * [types.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/types.go) / [registry.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/registry.go) / [path.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/path.go): Defines core tool interfaces, manages tool execution validation, scope checking.
 * [filesystem.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/filesystem.go): Implements files tools (read_file, write_file, list_dir, search_files, delete_file, move_file, create_dir).
 * [shell.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/shell.go): Implements run_command tool with blocklist protection and process execution.
 * [undo.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/undo.go): Thread-safe undo operations stack.
+* [git.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/git.go): Implements 7 git tools (status, diff, add, commit, log, branch, stash) via go-git.
+* [docker.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/docker.go): Implements 6 docker tools (ps, logs, exec, build, compose, pull) via Docker SDK.
+* [web.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/web.go): Implements web search and page fetch.
 
 ### `internal/safety/`
 * [guardrails.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/safety/guardrails.go) / [confirm.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/safety/confirm.go): Classifies execution safety tiers and handles confirmation queries structure.
 
 ### `internal/ui/`
-* [app.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/ui/app.go): Bubbletea program root coordinate, tab layout selection (`Ctrl+A` -> Ask, `Ctrl+P` -> Plan, `Ctrl+B` -> Build), model auto-swapping, and overlays routing.
+* [app.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/ui/app.go): Bubbletea program root coordinate, tab layout selection (`Ctrl+A` -> Ask, `Ctrl+P` -> Plan, `Ctrl+B` -> Build), model auto-swapping, overlays routing, and parse warning banner.
 * `views/` - ChatView, PlanChatView, PlanView, BuildView, ConfirmView, UndoHistoryView, ModelSelectView, MetricsView, HomeView.
-* `components/` - context bar progress display, status bar details, spinner, codeblock, and markdown renderer.
+* `components/` - context bar progress display, status bar details, spinner, codeblock, markdown renderer, and diffview (unified diff color visualizer).
 
 ---
 

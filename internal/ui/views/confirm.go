@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/yonatanzilberman/lmhub/internal/safety"
+	"github.com/yonatanzilberman/lmhub/internal/ui/components"
 	"github.com/yonatanzilberman/lmhub/internal/ui/styles"
 )
 
@@ -40,6 +41,11 @@ func (cv *ConfirmView) View() string {
 		levelStyle = lipgloss.NewStyle().Foreground(theme.DangerColor).Bold(true)
 	}
 
+	boxWidth := 60
+	if cv.width > 0 && cv.width < 70 {
+		boxWidth = cv.width - 10
+	}
+
 	var sb strings.Builder
 	sb.WriteString(levelStyle.Render(fmt.Sprintf("⚠️  %s REQUIRED  ⚠️\n\n", levelText)))
 	sb.WriteString(theme.NormalTextStyle.Render(fmt.Sprintf("%s\n\n", cv.msg.Description)))
@@ -58,13 +64,14 @@ func (cv *ConfirmView) View() string {
 		}
 	}
 
+	if cv.msg.Diff != "" {
+		sb.WriteString("\n" + theme.HelpStyle.Render("Proposed Changes:") + "\n")
+		dv := components.NewDiffView(cv.msg.Diff, boxWidth-4, 10)
+		sb.WriteString(dv.View() + "\n")
+	}
+
 	sb.WriteString("\n")
 	sb.WriteString(theme.HighlightStyle.Render("Proceed with execution? [y] Yes  |  [n/Esc] No\n"))
-
-	boxWidth := 60
-	if cv.width > 0 && cv.width < 70 {
-		boxWidth = cv.width - 10
-	}
 
 	modal := lipgloss.NewStyle().
 		Border(lipgloss.DoubleBorder()).
