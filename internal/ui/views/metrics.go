@@ -58,7 +58,8 @@ func (mv *MetricsView) View() string {
 	sb.WriteString("\n")
 
 	sb.WriteString(theme.SubtitleStyle.Render("Last Chat Stream Completion\n"))
-	sb.WriteString(strings.Repeat("─", mv.width-12) + "\n")
+	sb.WriteString(strings.Repeat("─", mv.width-12))
+	sb.WriteString("\n")
 	completionInfo := fmt.Sprintf(
 		"Time to first token (TTFT): %d ms\n"+
 			"Generation speed:          %.1f tok/s\n"+
@@ -70,7 +71,8 @@ func (mv *MetricsView) View() string {
 	sb.WriteString("\n")
 
 	sb.WriteString(theme.SubtitleStyle.Render("Context Window Allocation\n"))
-	sb.WriteString(strings.Repeat("─", mv.width-12) + "\n")
+	sb.WriteString(strings.Repeat("─", mv.width-12))
+	sb.WriteString("\n")
 	
 	pct := 0.0
 	if m.ContextLimit > 0 {

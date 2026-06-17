@@ -33,13 +33,24 @@ Any AI coding agent working on the LM Hub codebase **MUST** strictly adhere to t
 
 ## Current Status
 
-- **Current Phase**: Phase 1 — Foundation
-- **Milestone**: Bootstrap & Ask Mode Complete
-- **Status**: Completed scaffolding, client interfaces, telemetry, ask mode loop, TUI views, styles, and verified compilation and test status.
+- **Current Phase**: Phase 2 — Plan Mode + Context Infrastructure
+- **Milestone**: Plan mode and context budget system implemented
+- **Status**: All Phase 2 items completed. Plan Mode (JSON output & schema validation, plan TUI view, correction retries), Context Budget Allocator, Project Context File Loader, Enhanced Context Window Management (4-stage escalation), and TUI routing integration are fully implemented and verified with passing unit tests.
 
 ---
 
 ## Progress Log
+
+### 2026-06-17 (Phase 2 Plan Mode & Context Infrastructure Complete)
+- Implemented structured Plan and PlanStep models with JSON validation, defaults injection, and correction retry loop (`internal/modes/plan/schema.go`, `mode.go`).
+- Built context `BudgetManager` to coordinate Project Context, Memory, and RAG token boundaries (`internal/agent/budget.go`).
+- Created Project Context Loader supporting `.lmhub/context.md` file auto-injection (`internal/agent/projectctx.go`).
+- Implemented 4-stage Context escalations (Warn/Trim/NeedsSummarize/HardStop) in `ContextManager` (`internal/agent/context.go`).
+- Built interactive Plan Review view (icons, reversible/non-reversible flags, confidence coloring, save controls) and Plan Chat view (`internal/ui/views/plan.go`, `planchat.go`).
+- Added Plan tab to TUI header, wired model auto-swap when entering Plan mode, and integrated budget allocator context bar breakdown (`internal/ui/app.go`).
+- Resolved linter warnings for string concatenation in WriteString calls (`metrics.go`, `plan.go`) and unused parameter warnings (`modelselect.go`).
+- Created `project-status.md` in the project root to map component paths and status for efficient context loading.
+- Verified build compiles cleanly and all 4 new test packages pass.
 
 ### 2026-06-17 (Phase 1 Foundation Complete)
 - Created `agent.md` and `task.md` tracking list.
@@ -67,4 +78,4 @@ Because the legacy `/api/v0/models/loaded` telemetry is no longer present in LM 
 
 ## Known Issues & Tech Debt
 
-*None yet.*
+* **Deferred Named Plan Files**: In Phase 2, Plan mode saves plans using timestamped filenames (e.g., `.lmhub/plan-{timestamp}.json`). Supporting custom-named plans (e.g., `.lmhub/plans/add-jwt-auth.json`) is deferred to a future polish phase.

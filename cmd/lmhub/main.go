@@ -11,6 +11,7 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/api"
 	"github.com/yonatanzilberman/lmhub/internal/config"
 	"github.com/yonatanzilberman/lmhub/internal/modes/ask"
+	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/modelmanager"
 	"github.com/yonatanzilberman/lmhub/internal/ui"
 )
@@ -40,18 +41,26 @@ func main() {
 	watcher := modelmanager.NewWatcher(client, metrics, cfg.LMStudio.MetricsPollIntervalMs)
 	go watcher.Start(watcherCtx)
 
-	// 5. Initialize Context Manager
+	// 5. Initialize Context Manager and Budget Manager
 	ctxManager, err := agent.NewContextManager()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing tokenizer: %v\n", err)
 		os.Exit(1)
 	}
+	budgetManager := agent.NewBudgetManager(ctxManager, &cfg.ContextBudget)
 
-	// 6. Initialize Ask Mode
-	askMode := ask.NewAskMode(client, manager, ctxManager)
+	// 6. Initialize Modes
+	askMode := ask.NewAskMode(client, manager, ctxManager, budgetManager, cfg)
+	planMode := plan.NewPlanMode(client, manager, ctxManager, budgetManager, cfg)
 
 	// 7. Initialize Bubbletea Application
-	appModel, err := ui.NewApp(cfg, client, manager, askMode)
+	// Use current working directory as project root
+	projectRoot, err := os.Getwd()
+	if err != nil {
+		projectRoot = "."
+	}
+
+	appModel, err := ui.NewApp(cfg, client, manager, askMode, planMode, budgetManager, ctxManager, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing TUI application: %v\n", err)
 		os.Exit(1)

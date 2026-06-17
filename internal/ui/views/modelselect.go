@@ -124,7 +124,7 @@ func (mv *ModelSelectView) Update(msg tea.Msg) (tea.Cmd, error) {
 	return tea.Batch(cmds...), nil
 }
 
-func (mv *ModelSelectView) unloadModelCmd(instanceID string) tea.Cmd {
+func (mv *ModelSelectView) unloadModelCmd(_ string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		err := mv.manager.UnloadAll(ctx) // Unload everything for simplicity
