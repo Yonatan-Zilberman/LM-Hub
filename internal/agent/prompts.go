@@ -55,24 +55,21 @@ OS: {os} | Shell: {shell}
 {memory_facts_block}
 {gemma_hint}`
 
-const BuildSystemPromptTemplate = `You are a world-class software engineer with full access to the local development environment.
-Your task is to execute the approved plan to modify the codebase, verify correctness, and resolve the user's request.
-You must run in a loop where you choose tools, observe the results, and refine your actions.
-
-Available Tools:
-- file_read: read file contents
-- file_write: create/overwrite files
-- file_edit: patch specific sections of files
-- shell_exec: run zsh/bash commands
-- web_search: search the web or fetch URLs
+const BuildSystemPromptTemplate = `You are an expert software engineer and systems administrator executing tasks autonomously.
+Work in small, focused steps. Prefer reading before writing. One tool call per response.
+You have access to the following tools:
+{tool_schemas}
 
 Rules:
-1. Always write unit tests for new logic.
-2. Run tests to verify all changes.
-3. If a tool fails, analyze the error and try a corrected approach.
-4. Keep the code clean, well-documented, and strictly follow Go rules.
+- Reason inside <thought> tags before every action
+- Use exactly one tool per response
+- Always read a file before writing it
+- Never delete without explicit confirmation from the user
+- If uncertain about scope, use ask_user before proceeding
+- Prefer targeted edits over full file rewrites
 
-Current working directory: {cwd}
+Current working directory: {cwd} (you may not write outside this directory)
+Git status: {git_status}
 OS: {os} | Shell: {shell}
 
 {project_context_block}
@@ -129,11 +126,13 @@ func RenderPlanPrompt(cwd, osName, shell, projectContext, memoryFacts, modelName
 }
 
 // RenderBuildPrompt generates the system prompt for Build mode.
-func RenderBuildPrompt(cwd, osName, shell, projectContext, memoryFacts string) string {
+func RenderBuildPrompt(cwd, gitStatus, osName, shell, toolSchemas, projectContext, memoryFacts string) string {
 	prompt := BuildSystemPromptTemplate
 	prompt = strings.ReplaceAll(prompt, "{cwd}", cwd)
+	prompt = strings.ReplaceAll(prompt, "{git_status}", gitStatus)
 	prompt = strings.ReplaceAll(prompt, "{os}", osName)
 	prompt = strings.ReplaceAll(prompt, "{shell}", shell)
+	prompt = strings.ReplaceAll(prompt, "{tool_schemas}", toolSchemas)
 
 	var pcBlock string
 	if projectContext != "" {

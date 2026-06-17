@@ -33,13 +33,27 @@ Any AI coding agent working on the LM Hub codebase **MUST** strictly adhere to t
 
 ## Current Status
 
-- **Current Phase**: Phase 2 — Plan Mode + Context Infrastructure
-- **Milestone**: Plan mode and context budget system implemented
-- **Status**: All Phase 2 items completed. Plan Mode (JSON output & schema validation, plan TUI view, correction retries), Context Budget Allocator, Project Context File Loader, Enhanced Context Window Management (4-stage escalation), and TUI routing integration are fully implemented and verified with passing unit tests.
+- **Current Phase**: Phase 3 — Build Mode Core + Undo
+- **Milestone**: Autonomous Build Mode loop, Safety Classifier, and Rollback engine fully functional
+- **Status**: All Phase 3 items completed. Full ReAct agent loop execution with streaming context updates and user confirmation gates is operational. Per-tool undo snapshots, sequential UndoHistory rollback list (`Ctrl+Z`), safety classifier (escalating blocklisted shell calls), 7 filesystem tools, and run_command tool are complete and passing all package unit tests.
 
 ---
 
 ## Progress Log
+
+### 2026-06-17 (Phase 3 Build Mode Core + Undo Complete)
+- Defined core `Tool`, `ToolResult`, and `UndoRecord` models (`internal/tools/types.go`).
+- Created thread-safe `Registry` mapping names to instances with schema validations and scope check bindings (`internal/tools/registry.go`).
+- Implemented 7 filesystem tools with strict directory traversal prevention and rollback inverses (`internal/tools/filesystem.go`, `path.go`).
+- Implemented `run_command` tool running zsh/bash, capturing outputs, enforcing timeouts, and checking blocklist keywords (`internal/tools/shell.go`).
+- Built Safety Layer (`Classifier`, `FileSizeGuard`) and user-confirm message types (`internal/safety/guardrails.go`, `confirm.go`).
+- Built thread-safe `UndoStack` with pops, peeks, and batch rollbacks (`internal/tools/undo.go`).
+- Implemented 5-layer tool call parser (XML/JSON fallback) and unclosed tag thought extractor (`internal/agent/parser.go`).
+- Wired `BuildSession` tracking commands log, touched files, and iteration checks (`internal/modes/build/session.go`).
+- Implemented background `BuildMode` ReAct loops with interactive confirmations and streaming indicators (`internal/modes/build/mode.go`).
+- Built split-screen `BuildView`, centering `ConfirmView` alerts, and interactive `UndoHistoryView` rollback list (`internal/ui/views/build.go`, `confirm.go`, `undohistory.go`).
+- Fully wired app routing keys (`Ctrl+B`), tab selectors, auto-loading, and metrics bars (`internal/ui/app.go`).
+- Verified build compiles cleanly and all unit tests pass.
 
 ### 2026-06-17 (Phase 2 Plan Mode & Context Infrastructure Complete)
 - Implemented structured Plan and PlanStep models with JSON validation, defaults injection, and correction retry loop (`internal/modes/plan/schema.go`, `mode.go`).

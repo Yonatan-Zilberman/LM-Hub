@@ -13,7 +13,10 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/config"
 	"github.com/yonatanzilberman/lmhub/internal/modes/ask"
 	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
+	"github.com/yonatanzilberman/lmhub/internal/modes/build"
 	"github.com/yonatanzilberman/lmhub/internal/modelmanager"
+	"github.com/yonatanzilberman/lmhub/internal/safety"
+	"github.com/yonatanzilberman/lmhub/internal/tools"
 	"github.com/yonatanzilberman/lmhub/internal/ui/components"
 	"github.com/yonatanzilberman/lmhub/internal/ui/styles"
 	"github.com/yonatanzilberman/lmhub/internal/ui/views"
@@ -27,6 +30,7 @@ const (
 	ViewChat
 	ViewPlanChat
 	ViewPlan
+	ViewBuild
 	ViewModelSelect
 	ViewMetrics
 )
@@ -44,11 +48,14 @@ type App struct {
 	budgetManager   *agent.BudgetManager
 	statusBar       *components.StatusBar
 	contextBar      *components.ContextBar
+	registry        *tools.Registry
 	
 	homeView        *views.HomeView
 	chatView        *views.ChatView
 	planChatView    *views.PlanChatView
 	planView        *views.PlanView
+	buildView       *views.BuildView
+	buildMode       *build.BuildMode
 	modelSelectView *views.ModelSelectView
 	metricsView     *views.MetricsView
 
@@ -60,6 +67,15 @@ type App struct {
 	isLoadingModel  bool
 	modelLoadStatus string
 	modelStatusChan chan string
+
+	// Safety overlays
+	showConfirm     bool
+	confirmMsg      safety.ConfirmMsg
+	confirmView     *views.ConfirmView
+
+	// Undo overlays
+	showUndoHistory bool
+	undoHistoryView *views.UndoHistoryView
 
 	width  int
 	height int
@@ -84,6 +100,23 @@ func NewApp(
 	planChat := views.NewPlanChatView(pm, projectRoot)
 	planView := views.NewPlanView(projectRoot)
 
+	// Initialize Build Mode and Tools Registry
+	reg := tools.NewRegistry(projectRoot)
+	reg.Register(tools.NewReadFileTool(projectRoot))
+	reg.Register(tools.NewWriteFileTool(projectRoot))
+	reg.Register(tools.NewCreateDirTool(projectRoot))
+	reg.Register(tools.NewListDirTool(projectRoot))
+	reg.Register(tools.NewDeleteFileTool(projectRoot))
+	reg.Register(tools.NewMoveFileTool(projectRoot))
+	reg.Register(tools.NewSearchFilesTool(projectRoot))
+	reg.Register(tools.NewRunCommandTool(projectRoot, cfg.Tools.Shell.TimeoutSeconds, cfg.Tools.Shell.AllowedShells, cfg.Tools.Shell.Blocklist))
+
+	buildMode := build.NewBuildMode(client, mm, cm, bm, cfg, reg, nil, nil)
+	buildView, err := views.NewBuildView(buildMode)
+	if err != nil {
+		return nil, err
+	}
+
 	app := &App{
 		cfg:             cfg,
 		apiClient:       client,
@@ -92,15 +125,29 @@ func NewApp(
 		budgetManager:   bm,
 		statusBar:       components.NewStatusBar(),
 		contextBar:      components.NewContextBar(),
+		registry:        reg,
 		homeView:        views.NewHomeView(),
 		chatView:        chat,
 		planChatView:    planChat,
 		planView:        planView,
+		buildView:       buildView,
+		buildMode:       buildMode,
 		modelSelectView: views.NewModelSelectView(mm),
 		metricsView:     views.NewMetricsView(mm.Metrics()),
 		activeView:      ViewHome,
 		isOnline:        false,
 	}
+
+	// Configure build mode confirmation callback to hook TUI overlays
+	app.buildMode.SetConfirmCallback(func(msg safety.ConfirmMsg) bool {
+		app.confirmMsg = msg
+		app.confirmView = views.NewConfirmView(msg)
+		app.showConfirm = true
+
+		// Wait blocks the background execution loop until user sets the channel response
+		approved := <-msg.ResponseChan
+		return approved
+	})
 
 	// Try using pinned model if set in config
 	if cfg.ModeModels.Ask != "" {
@@ -137,6 +184,58 @@ func (a *App) scheduleOnlineCheck() tea.Cmd {
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// 1. Check Safety Confirmation Modal overlay input
+	if a.showConfirm {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "y", "Y":
+				a.confirmMsg.ResponseChan <- true
+				a.showConfirm = false
+			case "n", "N":
+				a.confirmMsg.ResponseChan <- false
+				a.showConfirm = false
+			default:
+				if keyMsg.Type == tea.KeyEsc {
+					a.confirmMsg.ResponseChan <- false
+					a.showConfirm = false
+				}
+			}
+		}
+		return a, nil
+	}
+
+	// 2. Check Undo History Modal overlay input
+	if a.showUndoHistory {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.Type {
+			case tea.KeyUp:
+				a.undoHistoryView.MoveSelection(-1)
+			case tea.KeyDown:
+				a.undoHistoryView.MoveSelection(1)
+			case tea.KeyEsc:
+				a.showUndoHistory = false
+			case tea.KeyEnter:
+				a.showUndoHistory = false
+				idx := a.undoHistoryView.SelectedIndex()
+				cmds = append(cmds, func() tea.Msg {
+					for i := 0; i <= idx; i++ {
+						_ = a.buildMode.Session().UndoStack.UndoLast(context.Background(), a.registry)
+					}
+					return nil
+				})
+			case tea.KeyRunes:
+				if keyMsg.String() == "u" || keyMsg.String() == "U" {
+					a.showUndoHistory = false
+					cmds = append(cmds, func() tea.Msg {
+						_ = a.buildMode.Session().UndoStack.UndoAll(context.Background(), a.registry)
+						return nil
+					})
+				}
+			}
+		}
+		return a, tea.Batch(cmds...)
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
@@ -148,8 +247,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.chatView.SetSize(msg.Width, msg.Height)
 		a.planChatView.SetSize(msg.Width, msg.Height)
 		a.planView.SetSize(msg.Width, msg.Height)
+		a.buildView.SetSize(msg.Width, msg.Height)
 		a.modelSelectView.SetSize(msg.Width, msg.Height)
 		a.metricsView.SetSize(msg.Width, msg.Height)
+
+		if a.confirmView != nil {
+			a.confirmView.SetSize(msg.Width, msg.Height)
+		}
+		if a.undoHistoryView != nil {
+			a.undoHistoryView.SetSize(msg.Width, msg.Height)
+		}
 
 	case tickOnlineStatusMsg:
 		a.isOnline = msg.Online
@@ -160,7 +267,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.modelLoadStatus = msg.Status
 			cmds = append(cmds, a.readNextModelStatusCmd())
 		} else {
-			// Forward model load status if modelSelectView triggered it
 			cmd, _ := a.modelSelectView.Update(msg)
 			cmds = append(cmds, cmd)
 		}
@@ -217,7 +323,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.activeView = ViewPlanChat
 				a.planChatView.Reset()
 				
-				// Model auto-switch logic
 				planModel := a.cfg.ModeModels.Plan
 				if planModel != "" && planModel != a.selectedModelID {
 					a.isLoadingModel = true
@@ -226,6 +331,33 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					
 					cmds = append(cmds, a.loadModelCmd(planModel, 8192))
 					cmds = append(cmds, a.readNextModelStatusCmd())
+				}
+			}
+
+		case tea.KeyCtrlB:
+			if a.activeView != ViewBuild {
+				a.activeView = ViewBuild
+				a.buildView.Reset()
+
+				buildModel := a.cfg.ModeModels.Build
+				if buildModel != "" && buildModel != a.selectedModelID {
+					a.isLoadingModel = true
+					a.modelLoadStatus = fmt.Sprintf("Auto-switching to Build mode model: %s...", buildModel)
+					a.modelStatusChan = make(chan string, 10)
+
+					cmds = append(cmds, a.loadModelCmd(buildModel, 32768))
+					cmds = append(cmds, a.readNextModelStatusCmd())
+				}
+			}
+
+		case tea.KeyCtrlZ:
+			if a.activeView == ViewBuild {
+				session := a.buildMode.Session()
+				if session != nil {
+					list := session.UndoStack.List()
+					a.undoHistoryView = views.NewUndoHistoryView(list)
+					a.undoHistoryView.SetSize(a.width, a.height)
+					a.showUndoHistory = true
 				}
 			}
 
@@ -248,11 +380,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlL:
 			if a.activeView == ViewChat {
 				a.chatView.Reset()
+			} else if a.activeView == ViewBuild {
+				a.buildView.Reset()
 			}
 		}
 
 	case views.ChannelReaderMsg:
 		cmd := a.chatView.HandleChannelReader(msg)
+		return a, cmd
+
+	case views.BuildChannelReaderMsg:
+		gitStatus := ""
+		projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
+		cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, "")
+		return a, cmd
+
+	case build.AgentStepMsg:
+		gitStatus := ""
+		projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
+		cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, "")
 		return a, cmd
 	}
 
@@ -267,6 +413,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		case ViewPlan:
 			cmd, _ := a.planView.Update(msg)
+			cmds = append(cmds, cmd)
+		case ViewBuild:
+			gitStatus := ""
+			projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
+			cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, "")
 			cmds = append(cmds, cmd)
 		case ViewModelSelect:
 			cmd, _ := a.modelSelectView.Update(msg)
@@ -303,11 +454,19 @@ func (a *App) readNextModelStatusCmd() tea.Cmd {
 func (a *App) View() string {
 	theme := styles.DefaultTheme
 
-	// 1. Top Mode Tab Selector Header
+	// 1. Overlay Overrides
+	if a.showConfirm && a.confirmView != nil {
+		return a.confirmView.View()
+	}
+	if a.showUndoHistory && a.undoHistoryView != nil {
+		return a.undoHistoryView.View()
+	}
+
+	// 2. Top Mode Tab Selector Header
 	tabs := []string{
 		" [Ctrl+A] ASK (Chat) ",
 		" [Ctrl+P] PLAN ",
-		" BUILD (Disabled) ",
+		" [Ctrl+B] BUILD ",
 	}
 	
 	activeTab := 0
@@ -315,11 +474,13 @@ func (a *App) View() string {
 		activeTab = 0
 	} else if a.activeView == ViewPlanChat || a.activeView == ViewPlan {
 		activeTab = 1
+	} else if a.activeView == ViewBuild {
+		activeTab = 2
 	}
 
 	var renderedTabs []string
 	for i, tab := range tabs {
-		isActive := i == activeTab && (a.activeView == ViewChat || a.activeView == ViewPlanChat || a.activeView == ViewPlan)
+		isActive := i == activeTab && (a.activeView == ViewChat || a.activeView == ViewPlanChat || a.activeView == ViewPlan || a.activeView == ViewBuild)
 		if isActive {
 			renderedTabs = append(renderedTabs, lipgloss.NewStyle().
 				Bold(true).
@@ -338,7 +499,7 @@ func (a *App) View() string {
 	modelSelectHelp := theme.HelpStyle.Render("   [Ctrl+M] Models  |  [Ctrl+I] Metrics  |  [Ctrl+Q] Exit")
 	header := lipgloss.JoinHorizontal(lipgloss.Left, headerLine, modelSelectHelp)
 
-	// 2. Active Screen Content
+	// 3. Active Screen Content
 	var content string
 	if a.isLoadingModel {
 		content = lipgloss.JoinVertical(lipgloss.Center,
@@ -357,6 +518,8 @@ func (a *App) View() string {
 			content = a.planChatView.View()
 		case ViewPlan:
 			content = a.planView.View()
+		case ViewBuild:
+			content = a.buildView.View()
 		case ViewModelSelect:
 			content = a.modelSelectView.View()
 		case ViewMetrics:
@@ -364,9 +527,9 @@ func (a *App) View() string {
 		}
 	}
 
-	// 3. Context Bar (Visible only in Chat screen)
+	// 4. Context Bar (Visible in Chat and Build screens)
 	ctxBar := ""
-	if a.activeView == ViewChat && a.cfg.UI.ShowContextBar {
+	if (a.activeView == ViewChat || a.activeView == ViewBuild) && a.cfg.UI.ShowContextBar {
 		m := a.modelManager.Metrics().Get()
 		
 		sysTokens := 400  // baseline estimate
@@ -390,7 +553,7 @@ func (a *App) View() string {
 		)
 	}
 
-	// 4. Status Bar (Always on bottom)
+	// 5. Status Bar (Always on bottom)
 	m := a.modelManager.Metrics().Get()
 	activeModeStr := "home"
 	switch a.activeView {
@@ -400,6 +563,8 @@ func (a *App) View() string {
 		activeModeStr = "plan-input"
 	case ViewPlan:
 		activeModeStr = "plan-review"
+	case ViewBuild:
+		activeModeStr = "build"
 	case ViewModelSelect:
 		activeModeStr = "models"
 	case ViewMetrics:
