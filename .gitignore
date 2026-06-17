@@ -1,0 +1,12 @@
+# Compiled binaries
+lmhub
+
+# Project runtime files
+.lmhub/
+
+# Operating System Files
+.DS_Store
+
+# User-specific configuration overrides (if copied locally)
+config.yaml
+/pkg/platform/local_*
