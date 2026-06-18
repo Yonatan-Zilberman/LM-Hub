@@ -16,6 +16,7 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/safety"
 	"github.com/yonatanzilberman/lmhub/internal/tools"
+	"github.com/yonatanzilberman/lmhub/internal/rag"
 )
 
 // AgentStepMsg is sent to the Bubbletea application to update the UI on agent activity.
@@ -36,6 +37,7 @@ type BuildMode struct {
 	budgetManager      *agent.BudgetManager
 	cfg                *config.Config
 	registry           *tools.Registry
+	retriever          *rag.Retriever
 	classifier         *safety.Classifier
 	history            []api.Message
 	session            *BuildSession
@@ -52,6 +54,7 @@ func NewBuildMode(
 	bm *agent.BudgetManager,
 	cfg *config.Config,
 	reg *tools.Registry,
+	retriever *rag.Retriever,
 	confirmCB func(msg safety.ConfirmMsg) bool,
 	updateCB func(msg AgentStepMsg),
 ) *BuildMode {
@@ -62,6 +65,7 @@ func NewBuildMode(
 		budgetManager:   bm,
 		cfg:             cfg,
 		registry:        reg,
+		retriever:       retriever,
 		classifier:      safety.NewClassifier(cfg.Tools.Shell.Blocklist),
 		history:         make([]api.Message, 0),
 		confirmCallback: confirmCB,
@@ -128,6 +132,20 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 	}
 
 	go func() {
+		// Retrieve RAG chunks matching the task if enabled
+		var ragChunks string
+		if bm.retriever != nil && bm.cfg.RAG.Enabled {
+			retrieved, err := bm.retriever.Retrieve(ctx, task, bm.cfg.RAG.TopK, bm.cfg.RAG.MaxTokens)
+			if err == nil && len(retrieved) > 0 {
+				var ragPieces []string
+				for _, chunk := range retrieved {
+					piece := fmt.Sprintf("[%s:%d-%d]\n%s", chunk.FilePath, chunk.StartLine, chunk.EndLine, chunk.Content)
+					ragPieces = append(ragPieces, piece)
+				}
+				ragChunks = strings.Join(ragPieces, "\n\n")
+			}
+		}
+
 		// First step: add the user task if history is empty
 		if len(bm.history) == 0 {
 			if bm.session.PlanRef != nil {
@@ -201,8 +219,8 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 
 			// Generate system prompt dynamically
 			toolSchemas, _ := bm.registry.SchemaJSON()
-			allocation := bm.budgetManager.Allocate(projectContext, memoryFacts, "")
-			systemPrompt := agent.RenderBuildPrompt(bm.session.ScopeRoot, gitStatus, runtime.GOOS, bm.cfg.Tools.Shell.AllowedShells[0], toolSchemas, allocation.ProjectContext, allocation.MemoryFacts)
+			allocation := bm.budgetManager.Allocate(projectContext, memoryFacts, ragChunks)
+			systemPrompt := agent.RenderBuildPrompt(bm.session.ScopeRoot, gitStatus, runtime.GOOS, bm.cfg.Tools.Shell.AllowedShells[0], toolSchemas, allocation.ProjectContext, allocation.MemoryFacts, allocation.RAGChunks)
 
 			// Check context limits
 			metrics := bm.modelManager.Metrics().Get()

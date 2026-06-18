@@ -33,13 +33,24 @@ Any AI coding agent working on the LM Hub codebase **MUST** strictly adhere to t
 
 ## Current Status
 
-- **Current Phase**: Phase 4 — Build Mode Extended
-- **Milestone**: All tool families (Git, Docker, Web) operational, Diff Viewer, Plan→Build sequential execution, Tool activity panel wired, Parse warnings active.
-- **Status**: Completed Phase 4 implementation. Added pure-Go `go-git/v5` Git tools (status, diff, add, commit, log, branch, stash) with undo. Added Docker SDK tools (ps, logs, exec, build, compose, pull). Added Web tools (DuckDuckGo Search & Fetch). Configured split-screen interactive diff viewer (`Ctrl+D` toggle) and unified diff display in write confirmations. Completed sequential plan handoff execution. Integrated consecutive parse failure detection and dismissal warning banner. All unit tests pass cleanly.
+- **Current Phase**: Phase 5 — RAG & Embeddings
+- **Milestone**: Codebase indexing and context-aware retrieval operational.
+- **Status**: Completed Phase 5 implementation. Added embeddings client for `/v1/embeddings`, sliding-window tokenizer-based chunker, bbolt-backed vector/metadata store, project directory walker/indexer, semantic retriever, and fsnotify-based file watcher for incremental indexing. Added CLI `index` commands (`--watch`, `--clear`, `--stats`) and auto-loaded embedding model in LM Studio. Wired semantic retrieval into Plan and Build modes. All unit tests pass cleanly.
 
 ---
 
 ## Progress Log
+
+### 2026-06-18 (Phase 5 RAG & Embeddings Complete)
+- Implemented `/v1/embeddings` API client in `internal/api/embeddings.go`.
+- Created token-based sliding-window `Chunker` and `Store` (bbolt vector store) in `internal/rag/`.
+- Created `Indexer` supporting codebase walks, binary/ignore skipping, and batch embeddings requests.
+- Created `Retriever` executing semantic queries, cosine similarity ranking, and token budget constraints.
+- Wired RAG context injection into Plan and Build modes dynamically.
+- Implemented `Watcher` (fsnotify-based recursive directory file watcher).
+- Integrated `index` CLI subcommands (`--watch`, `--stats`, `--clear`) in `cmd/lmhub/main.go` with auto-load sequence for embedding model.
+- Addressed static analysis issues: promoted `github.com/fsnotify/fsnotify` and `go.etcd.io/bbolt` to direct dependencies in `go.mod`, and refactored if-else chains to tagged switch statements on `activeView` in `internal/ui/app.go`.
+- Verified build compiles cleanly and 100% of unit tests pass.
 
 ### 2026-06-17 (Phase 4 Build Mode Extended Complete)
 - Implemented 7 core git tools with go-git backend and undo integration (`git_add` undo via staged restore, `git_commit` reset last commit).
@@ -97,8 +108,12 @@ LM Studio has transitioned model load/unload APIs from `/api/v0` to `/api/v1` in
 ### 2. Client-side Metrics Estimation
 Because the legacy `/api/v0/models/loaded` telemetry is no longer present in LM Studio 0.4.0+, speed (tokens/sec) and TTFT (ms) are calculated client-side during response stream processing in the API client, and total context token usage is tracked locally using `tiktoken-go`.
 
+### 3. Local-First Vector Storage with bbolt
+For the RAG indexing system, we utilized `bbolt` to store both chunk metadata and pre-computed `[]float32` embeddings. Since project codebases are typically under 10,000 chunks, a brute-force cosine similarity ranking over all chunks is extremely fast (well under 50ms in Go) and avoids the complexity/overhead of dedicated vector databases or CGO-dependent ANN libraries.
+
 ---
 
 ## Known Issues & Tech Debt
 
 * **Deferred Named Plan Files**: In Phase 2, Plan mode saves plans using timestamped filenames (e.g., `.lmhub/plan-{timestamp}.json`). Supporting custom-named plans (e.g., `.lmhub/plans/add-jwt-auth.json`) is deferred to a future polish phase.
+* **Language-Aware Chunker (Tree-sitter)**: The RAG system currently uses a token-based sliding window chunker. Implementing recursive tree-sitter AST parsing for Go/Python/JS function/class boundaries is deferred to a future polish phase.

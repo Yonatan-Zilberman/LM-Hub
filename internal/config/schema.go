@@ -26,6 +26,7 @@ type LMStudioConfig struct {
 	TimeoutSeconds        int    `mapstructure:"timeout_seconds" yaml:"timeout_seconds"`
 	Stream                bool   `mapstructure:"stream" yaml:"stream"`
 	MetricsPollIntervalMs int    `mapstructure:"metrics_poll_interval_ms" yaml:"metrics_poll_interval_ms"`
+	EmbeddingModel        string `mapstructure:"embedding_model" yaml:"embedding_model"`
 }
 
 // ModeModelsConfig pins specific models for each operational mode.
@@ -163,6 +164,7 @@ func DefaultConfig() Config {
 			TimeoutSeconds:        120,
 			Stream:                true,
 			MetricsPollIntervalMs: 2000,
+			EmbeddingModel:        "text-embedding-nomic-embed-text-v1.5",
 		},
 		ModeModels: ModeModelsConfig{
 			Ask:   "",

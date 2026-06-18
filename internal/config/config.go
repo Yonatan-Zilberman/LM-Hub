@@ -23,6 +23,7 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("lmstudio.timeout_seconds", defaultCfg.LMStudio.TimeoutSeconds)
 	v.SetDefault("lmstudio.stream", defaultCfg.LMStudio.Stream)
 	v.SetDefault("lmstudio.metrics_poll_interval_ms", defaultCfg.LMStudio.MetricsPollIntervalMs)
+	v.SetDefault("lmstudio.embedding_model", defaultCfg.LMStudio.EmbeddingModel)
 
 	v.SetDefault("mode_models.ask", defaultCfg.ModeModels.Ask)
 	v.SetDefault("mode_models.plan", defaultCfg.ModeModels.Plan)
@@ -129,7 +130,7 @@ func Load(configPath string) (*Config, error) {
 				home, _ := os.UserHomeDir()
 				cfgPath = filepath.Join(home, ".config", "lmhub", "config.yaml")
 			}
-			err := writeDefaultConfig(cfgPath, defaultCfg)
+			err := writeDefaultConfig(cfgPath)
 			if err != nil {
 				return nil, fmt.Errorf("failed to write default config: %w", err)
 			}
@@ -186,7 +187,7 @@ func (c *Config) resolvePaths() error {
 	return nil
 }
 
-func writeDefaultConfig(path string, cfg Config) error {
+func writeDefaultConfig(path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory %s: %w", dir, err)
@@ -200,6 +201,7 @@ lmstudio:
   timeout_seconds: 120
   stream: true
   metrics_poll_interval_ms: 2000
+  embedding_model: "text-embedding-nomic-embed-text-v1.5"
 
 mode_models:
   ask:   ""

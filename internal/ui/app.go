@@ -17,6 +17,7 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/modelmanager"
 	"github.com/yonatanzilberman/lmhub/internal/safety"
 	"github.com/yonatanzilberman/lmhub/internal/tools"
+	"github.com/yonatanzilberman/lmhub/internal/rag"
 	"github.com/yonatanzilberman/lmhub/internal/ui/components"
 	"github.com/yonatanzilberman/lmhub/internal/ui/styles"
 	"github.com/yonatanzilberman/lmhub/internal/ui/views"
@@ -93,6 +94,7 @@ func NewApp(
 	pm *plan.PlanMode,
 	bm *agent.BudgetManager,
 	cm *agent.ContextManager,
+	retriever *rag.Retriever,
 	projectRoot string,
 ) (*App, error) {
 	chat, err := views.NewChatView(am)
@@ -137,7 +139,7 @@ func NewApp(
 	reg.Register(tools.NewWebSearchTool(cfg.Tools.Web.SearchProvider, cfg.Tools.Web.SerperAPIKey))
 	reg.Register(tools.NewWebFetchTool(cfg.Tools.Web.FetchTimeoutSeconds, cfg.Tools.Web.CacheTTLMinutes))
 
-	buildMode := build.NewBuildMode(client, mm, cm, bm, cfg, reg, nil, nil)
+	buildMode := build.NewBuildMode(client, mm, cm, bm, cfg, reg, retriever, nil, nil)
 	buildView, err := views.NewBuildView(buildMode)
 	if err != nil {
 		return nil, err
@@ -411,9 +413,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case tea.KeyCtrlL:
-			if a.activeView == ViewChat {
+			switch a.activeView {
+			case ViewChat:
 				a.chatView.Reset()
-			} else if a.activeView == ViewBuild {
+			case ViewBuild:
 				a.buildView.Reset()
 			}
 		}
@@ -506,11 +509,12 @@ func (a *App) View() string {
 	}
 	
 	activeTab := 0
-	if a.activeView == ViewChat {
+	switch a.activeView {
+	case ViewChat:
 		activeTab = 0
-	} else if a.activeView == ViewPlanChat || a.activeView == ViewPlan {
+	case ViewPlanChat, ViewPlan:
 		activeTab = 1
-	} else if a.activeView == ViewBuild {
+	case ViewBuild:
 		activeTab = 2
 	}
 

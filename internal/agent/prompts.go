@@ -53,6 +53,7 @@ OS: {os} | Shell: {shell}
 
 {project_context_block}
 {memory_facts_block}
+{rag_chunks_block}
 {gemma_hint}`
 
 const BuildSystemPromptTemplate = `You are an expert software engineer and systems administrator executing tasks autonomously.
@@ -73,7 +74,8 @@ Git status: {git_status}
 OS: {os} | Shell: {shell}
 
 {project_context_block}
-{memory_facts_block}`
+{memory_facts_block}
+{rag_chunks_block}`
 
 // RenderAskPrompt generates the system prompt for Ask mode.
 func RenderAskPrompt(cwd, osName, shell, projectContext, memoryFacts string) string {
@@ -98,7 +100,7 @@ func RenderAskPrompt(cwd, osName, shell, projectContext, memoryFacts string) str
 }
 
 // RenderPlanPrompt generates the system prompt for Plan mode.
-func RenderPlanPrompt(cwd, osName, shell, projectContext, memoryFacts, modelName string) string {
+func RenderPlanPrompt(cwd, osName, shell, projectContext, memoryFacts, ragChunks, modelName string) string {
 	prompt := PlanSystemPromptTemplate
 	prompt = strings.ReplaceAll(prompt, "{cwd}", cwd)
 	prompt = strings.ReplaceAll(prompt, "{os}", osName)
@@ -116,6 +118,12 @@ func RenderPlanPrompt(cwd, osName, shell, projectContext, memoryFacts, modelName
 	}
 	prompt = strings.ReplaceAll(prompt, "{memory_facts_block}", memBlock)
 
+	var ragBlock string
+	if ragChunks != "" {
+		ragBlock = "== Relevant codebase context ==\n" + ragChunks + "\n"
+	}
+	prompt = strings.ReplaceAll(prompt, "{rag_chunks_block}", ragBlock)
+
 	var gemmaHint string
 	if strings.Contains(strings.ToLower(modelName), "gemma") {
 		gemmaHint = "IMPORTANT: Your response must be raw JSON only. No markdown, no explanation, no code fences."
@@ -126,7 +134,7 @@ func RenderPlanPrompt(cwd, osName, shell, projectContext, memoryFacts, modelName
 }
 
 // RenderBuildPrompt generates the system prompt for Build mode.
-func RenderBuildPrompt(cwd, gitStatus, osName, shell, toolSchemas, projectContext, memoryFacts string) string {
+func RenderBuildPrompt(cwd, gitStatus, osName, shell, toolSchemas, projectContext, memoryFacts, ragChunks string) string {
 	prompt := BuildSystemPromptTemplate
 	prompt = strings.ReplaceAll(prompt, "{cwd}", cwd)
 	prompt = strings.ReplaceAll(prompt, "{git_status}", gitStatus)
@@ -145,6 +153,12 @@ func RenderBuildPrompt(cwd, gitStatus, osName, shell, toolSchemas, projectContex
 		memBlock = "== What I know about this project ==\n" + memoryFacts + "\n"
 	}
 	prompt = strings.ReplaceAll(prompt, "{memory_facts_block}", memBlock)
+
+	var ragBlock string
+	if ragChunks != "" {
+		ragBlock = "== Relevant codebase context ==\n" + ragChunks + "\n"
+	}
+	prompt = strings.ReplaceAll(prompt, "{rag_chunks_block}", ragBlock)
 
 	return strings.TrimSpace(prompt)
 }

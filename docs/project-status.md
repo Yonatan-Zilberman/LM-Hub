@@ -6,8 +6,8 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 
 ## Active Status
 
-* **Current Phase**: Phase 4 Complete (Build Mode Extended)
-* **Status**: Compilation is clean, all unit tests are passing.
+* **Current Phase**: Phase 5 Complete (RAG & Embeddings)
+* **Status**: Compilation is clean, 100% of unit tests are passing. RAG indexing and semantic retrieval are fully wired into Plan and Build modes.
 
 ---
 
@@ -17,7 +17,7 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 * [main.go](file:///Users/yonatanzilberman/Documents/LM-Hub/cmd/lmhub/main.go): App initialization. Loads config, spawns API client, model manager watcher, tokenizer context/budget structures, instantiates Modes, tools registry, and launches the Bubbletea program.
 
 ### `internal/api/`
-* [client.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/client.go) / [chat.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/chat.go) / [models.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/models.go): LM Studio API v1 integration. SSE streaming completions, loaded model configuration queries, and client-side metrics calculation (TTFT, tokens/sec).
+* [client.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/client.go) / [chat.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/chat.go) / [models.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/models.go) / [embeddings.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/embeddings.go): LM Studio API v1 integration. SSE streaming completions, loaded model configuration queries, client-side metrics calculation (TTFT, tokens/sec), and embeddings request client.
 
 ### `internal/config/`
 * [schema.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/config/schema.go) / [config.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/config/config.go): Application schema defaults and Viper configuration parser.
@@ -46,6 +46,14 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 * [docker.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/docker.go): Implements 6 docker tools (ps, logs, exec, build, compose, pull) via Docker SDK.
 * [web.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/tools/web.go): Implements web search and page fetch.
 
+### `internal/rag/`
+* [store.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/rag/store.go): bbolt-backed vector + metadata store.
+* [chunker.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/rag/chunker.go): Token-based sliding-window chunker aligning to line boundaries.
+* [indexer.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/rag/indexer.go): Handles walking project directory, binary checks, and embedding batches.
+* [retriever.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/rag/retriever.go): Semantic retriever matching and ranking chunks under token budgets.
+* [watcher.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/rag/watcher.go): fsnotify-based recursive project watcher updating store incrementally.
+* [cosine.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/rag/cosine.go): Pure-Go float32 cosine similarity calculation.
+
 ### `internal/safety/`
 * [guardrails.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/safety/guardrails.go) / [confirm.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/safety/confirm.go): Classifies execution safety tiers and handles confirmation queries structure.
 
@@ -59,6 +67,7 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 ## Technical Debt & Deferred Items
 
 * **Named Plan Files**: Currently, Plan mode saves plans using timestamped names (e.g., `.lmhub/plan-{timestamp}.json`). Support for custom-named plans (e.g., `.lmhub/plans/add-jwt-auth.json`) is deferred.
+* **Language-Aware Chunker (Tree-sitter)**: Replacing the sliding-window chunker with tree-sitter AST function/class bounds is deferred to a future polish phase.
 
 ---
 

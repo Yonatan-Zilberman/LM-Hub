@@ -116,3 +116,24 @@ type LoadedModelInfo struct {
 	TokensPerSecond float64 `json:"tokens_per_sec"`
 	TTFT_ms         int     `json:"ttft_ms"`
 }
+
+// EmbeddingsRequest represents the payload for generating embeddings.
+type EmbeddingsRequest struct {
+	Model string   `json:"model"`
+	Input []string `json:"input"`
+}
+
+// EmbeddingObject represents a single embedding output object.
+type EmbeddingObject struct {
+	Object    string    `json:"object"`
+	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+
+// EmbeddingsResponse represents the response from embeddings generation.
+type EmbeddingsResponse struct {
+	Object string            `json:"object"`
+	Data   []EmbeddingObject `json:"data"`
+	Model  string            `json:"model"`
+	Usage  Usage             `json:"usage"`
+}

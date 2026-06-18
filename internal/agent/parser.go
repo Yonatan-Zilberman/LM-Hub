@@ -148,12 +148,13 @@ func ParseToolCall(content string, nativeCalls []api.ToolCall) ([]ToolCall, erro
 	start := -1
 	depth := 0
 	for i := 0; i < len(content); i++ {
-		if content[i] == '{' {
+		switch content[i] {
+		case '{':
 			if depth == 0 {
 				start = i
 			}
 			depth++
-		} else if content[i] == '}' {
+		case '}':
 			if depth > 0 {
 				depth--
 				if depth == 0 && start != -1 {

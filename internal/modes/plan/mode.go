@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/yonatanzilberman/lmhub/internal/agent"
 	"github.com/yonatanzilberman/lmhub/internal/api"
 	"github.com/yonatanzilberman/lmhub/internal/config"
 	"github.com/yonatanzilberman/lmhub/internal/modelmanager"
+	"github.com/yonatanzilberman/lmhub/internal/rag"
 )
 
 // PlanMode coordinates plan generation, parsing, and correction retries.
@@ -19,6 +21,7 @@ type PlanMode struct {
 	contextManager *agent.ContextManager
 	budgetManager  *agent.BudgetManager
 	cfg            *config.Config
+	retriever      *rag.Retriever
 	parseFailures  int
 }
 
@@ -29,6 +32,7 @@ func NewPlanMode(
 	contextManager *agent.ContextManager,
 	budgetManager *agent.BudgetManager,
 	cfg *config.Config,
+	retriever *rag.Retriever,
 ) *PlanMode {
 	return &PlanMode{
 		client:         client,
@@ -36,6 +40,7 @@ func NewPlanMode(
 		contextManager: contextManager,
 		budgetManager:  budgetManager,
 		cfg:            cfg,
+		retriever:      retriever,
 	}
 }
 
@@ -54,6 +59,19 @@ func (pm *PlanMode) ResetParseFailures() {
 // and parses the response. If parsing fails, it retries once with a correction prompt.
 // It returns the parsed Plan, the raw model output (useful for debugging/UI), and any error.
 func (pm *PlanMode) GeneratePlan(ctx context.Context, modelID, task string, projectRoot string, ragChunks string, memoryFacts string) (*Plan, string, error) {
+	// If RAG is enabled, retrieve relevant chunks for the task automatically if not pre-provided
+	if ragChunks == "" && pm.retriever != nil && pm.cfg.RAG.Enabled {
+		retrieved, err := pm.retriever.Retrieve(ctx, task, pm.cfg.RAG.TopK, pm.cfg.RAG.MaxTokens)
+		if err == nil && len(retrieved) > 0 {
+			var ragPieces []string
+			for _, chunk := range retrieved {
+				piece := fmt.Sprintf("[%s:%d-%d]\n%s", chunk.FilePath, chunk.StartLine, chunk.EndLine, chunk.Content)
+				ragPieces = append(ragPieces, piece)
+			}
+			ragChunks = strings.Join(ragPieces, "\n\n")
+		}
+	}
+
 	// Load project context from file
 	projectCtx, err := agent.LoadProjectContext(projectRoot, pm.contextManager, pm.cfg.ContextBudget.ProjectContextMaxTokens)
 	if err != nil {
@@ -71,7 +89,7 @@ func (pm *PlanMode) GeneratePlan(ctx context.Context, modelID, task string, proj
 	osName := runtime.GOOS
 	shell := "zsh" // default to zsh, or standard shell
 
-	systemPrompt := agent.RenderPlanPrompt(cwd, osName, shell, allocation.ProjectContext, allocation.MemoryFacts, modelID)
+	systemPrompt := agent.RenderPlanPrompt(cwd, osName, shell, allocation.ProjectContext, allocation.MemoryFacts, allocation.RAGChunks, modelID)
 
 	req := api.ChatRequest{
 		Model: modelID,
