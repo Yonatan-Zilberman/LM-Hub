@@ -40,3 +40,8 @@ func (d *DarwinPlatform) DataDir() (string, error) {
 func (d *DarwinPlatform) DockerSocket() string {
 	return "/var/run/docker.sock"
 }
+
+// ShellArgs returns the executor and arguments for running a command in macOS.
+func (d *DarwinPlatform) ShellArgs(cmd string) (string, []string) {
+	return "/bin/zsh", []string{"-c", cmd}
+}

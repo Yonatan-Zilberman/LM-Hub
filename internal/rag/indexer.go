@@ -130,8 +130,8 @@ func (idx *Indexer) IndexFile(ctx context.Context, relPath, absPath string) erro
 		return nil
 	}
 
-	// 3. Chunk the file
-	chunks, err := idx.chunker.ChunkFile(relPath, content, idx.chunkSize, idx.overlap)
+	// 3. Chunk the file using AST parser (if enabled via tags) or fallback window
+	chunks, err := idx.chunker.ChunkFileAST(relPath, content, idx.chunkSize, idx.overlap)
 	if err != nil {
 		return fmt.Errorf("failed to chunk file: %w", err)
 	}

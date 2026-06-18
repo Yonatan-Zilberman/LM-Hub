@@ -6,15 +6,15 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 
 ## Active Status
 
-* **Current Phase**: Phase 6 Complete (Memory + Templates)
-* **Status**: Compilation is clean, 100% of unit tests are passing. RAG indexing, semantic retrieval, persistent memory managers, fact auto-extraction, and prompt templates browser are fully wired.
+* **Current Phase**: Phase 7 Complete (Polish & Platform)
+* **Status**: Compilation is clean, 100% of unit tests are passing. CLI commands suite, platform support config files, first-run wizard, and session persistence are fully implemented and integrated.
 
 ---
 
 ## Codebase Directory & Component Map
 
 ### `cmd/lmhub/`
-* [main.go](file:///Users/yonatanzilberman/Documents/LM-Hub/cmd/lmhub/main.go): App initialization. Loads config, spawns API client, model manager watcher, tokenizer context/budget structures, instantiates Modes, tools registry, and launches the Bubbletea program.
+* [main.go](file:///Users/yonatanzilberman/Documents/LM-Hub/cmd/lmhub/main.go) / [cli.go](file:///Users/yonatanzilberman/Documents/LM-Hub/cmd/lmhub/cli.go) / [commands.go](file:///Users/yonatanzilberman/Documents/LM-Hub/cmd/lmhub/commands.go): App CLI routing and non-interactive executions. Boots TUI, runs ask/plan/build, handles memory and index subcommands, and configures setup wizard.
 
 ### `internal/api/`
 * [client.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/client.go) / [chat.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/chat.go) / [models.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/models.go) / [embeddings.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/api/embeddings.go): LM Studio API v1 integration. SSE streaming completions, loaded model configuration queries, client-side metrics calculation (TTFT, tokens/sec), and embeddings request client.
@@ -57,6 +57,12 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 ### `internal/safety/`
 * [guardrails.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/safety/guardrails.go) / [confirm.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/safety/confirm.go): Classifies execution safety tiers and handles confirmation queries structure.
 
+### `internal/session/`
+* [session.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/session/session.go) / [history.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/session/history.go): Local conversation history logging and JSON serializations.
+
+### `pkg/platform/`
+* [platform.go](file:///Users/yonatanzilberman/Documents/LM-Hub/pkg/platform/platform.go) / [darwin.go](file:///Users/yonatanzilberman/Documents/LM-Hub/pkg/platform/darwin.go) / [linux.go](file:///Users/yonatanzilberman/Documents/LM-Hub/pkg/platform/linux.go) / [windows.go](file:///Users/yonatanzilberman/Documents/LM-Hub/pkg/platform/windows.go): Cross-platform configuration paths and shell executors.
+
 ### `internal/ui/`
 * [app.go](file:///Users/yonatanzilberman/Documents/LM-Hub/internal/ui/app.go): Bubbletea program root coordinate, tab layout selection (`Ctrl+A` -> Ask, `Ctrl+P` -> Plan, `Ctrl+B` -> Build), model auto-swapping, overlays routing, and parse warning banner.
 * `views/` - ChatView, PlanChatView, PlanView, BuildView, ConfirmView, UndoHistoryView, ModelSelectView, MetricsView, HomeView.
@@ -67,7 +73,6 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 ## Technical Debt & Deferred Items
 
 * **Named Plan Files**: Currently, Plan mode saves plans using timestamped names (e.g., `.lmhub/plan-{timestamp}.json`). Support for custom-named plans (e.g., `.lmhub/plans/add-jwt-auth.json`) is deferred.
-* **Language-Aware Chunker (Tree-sitter)**: Replacing the sliding-window chunker with tree-sitter AST function/class bounds is deferred to a future polish phase.
 
 ---
 

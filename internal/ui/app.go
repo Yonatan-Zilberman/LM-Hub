@@ -3,6 +3,9 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,13 +16,14 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/config"
 	"github.com/yonatanzilberman/lmhub/internal/memory"
 	"github.com/yonatanzilberman/lmhub/internal/modes/ask"
-	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/modes/build"
+	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/modelmanager"
-	"github.com/yonatanzilberman/lmhub/internal/safety"
-	"github.com/yonatanzilberman/lmhub/internal/tools"
 	"github.com/yonatanzilberman/lmhub/internal/rag"
+	"github.com/yonatanzilberman/lmhub/internal/safety"
+	"github.com/yonatanzilberman/lmhub/internal/session"
 	"github.com/yonatanzilberman/lmhub/internal/templates"
+	"github.com/yonatanzilberman/lmhub/internal/tools"
 	"github.com/yonatanzilberman/lmhub/internal/ui/components"
 	"github.com/yonatanzilberman/lmhub/internal/ui/styles"
 	"github.com/yonatanzilberman/lmhub/internal/ui/views"
@@ -92,6 +96,9 @@ type App struct {
 
 	// Warning banners
 	parseWarningMsg string
+
+	projectRoot    string
+	currentSession *session.Session
 
 	width  int
 	height int
@@ -182,6 +189,7 @@ func NewApp(
 		templatesView:   views.NewTemplatesView(tmplLib),
 		activeView:      ViewHome,
 		isOnline:        false,
+		projectRoot:     projectRoot,
 	}
 
 	// Configure build mode confirmation callback to hook TUI overlays
@@ -402,7 +410,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.Type {
 		case tea.KeyCtrlQ:
+			if a.cfg.Sessions.AutoSave {
+				_ = a.SaveCurrentSession("")
+			}
 			return a, tea.Quit
+
+		case tea.KeyCtrlS:
+			err := a.SaveCurrentSession("")
+			if err != nil {
+				a.chatView.StatusLog = fmt.Sprintf("Error saving session: %v", err)
+			} else {
+				a.chatView.StatusLog = "Session saved successfully to .lmhub/sessions/"
+			}
 
 		case tea.KeyCtrlA:
 			if a.activeView != ViewChat {
@@ -493,6 +512,60 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case views.ChannelReaderMsg:
 		cmd := a.chatView.HandleChannelReader(msg)
 		return a, cmd
+
+	case views.SlashCmdMsg:
+		switch msg.CmdType {
+		case "/save":
+			err := a.SaveCurrentSession(msg.Arg)
+			if err != nil {
+				a.chatView.StatusLog = fmt.Sprintf("Error saving session: %v", err)
+			} else {
+				a.chatView.StatusLog = "Session saved successfully."
+			}
+		case "/load":
+			if msg.Arg == "" {
+				a.chatView.StatusLog = "Error: please specify a session ID or filename."
+				break
+			}
+			err := a.LoadSession(msg.Arg)
+			if err != nil {
+				a.chatView.StatusLog = fmt.Sprintf("Error loading session: %v", err)
+			} else {
+				a.chatView.StatusLog = "Session loaded successfully."
+			}
+		case "/clear":
+			a.chatView.Reset()
+		case "/mem":
+			if a.memoryView != nil {
+				a.memoryView.Refresh()
+				a.showMemory = !a.showMemory
+			}
+		case "/context":
+			// Open editor on context.md
+			editor := os.Getenv("EDITOR")
+			if editor == "" {
+				editor = "vim" // Default fallback
+			}
+			ctxPath := filepath.Join(a.projectRoot, ".lmhub", "context.md")
+			// Create directory if not exists
+			_ = os.MkdirAll(filepath.Dir(ctxPath), 0755)
+			// Create the file if it doesn't exist
+			if _, err := os.Stat(ctxPath); os.IsNotExist(err) {
+				_ = os.WriteFile(ctxPath, []byte("# Project Context\n\n"), 0644)
+			}
+			c := exec.Command(editor, ctxPath)
+			cmds = append(cmds, tea.ExecProcess(c, func(err error) tea.Msg {
+				if err != nil {
+					return views.ChatErrorMsg{Err: fmt.Errorf("editor error: %w", err)}
+				}
+				return nil
+			}))
+		case "/help":
+			a.chatView.StatusLog = "Commands: /save [name], /load <id>, /clear, /mem, /context, /help"
+		default:
+			a.chatView.StatusLog = fmt.Sprintf("Unknown command: %s", msg.CmdType)
+		}
+		return a, tea.Batch(cmds...)
 
 	case views.TemplateApplyMsg:
 		a.showTemplates = false
@@ -788,4 +861,106 @@ func (a *App) View() string {
 		"\n",
 		sBar,
 	)
+}
+
+// SaveCurrentSession saves the active conversation history and context metadata to a local file.
+func (a *App) SaveCurrentSession(customName string) error {
+	if a.currentSession == nil {
+		id := time.Now().Format("20060102-150405")
+		modeStr := "ask"
+		if a.activeView == ViewBuild {
+			modeStr = "build"
+		}
+		a.currentSession = session.NewSession(id, modeStr, a.selectedModelID)
+	}
+
+	if a.activeView == ViewChat {
+		a.currentSession.Messages = a.chatView.AskMode().History()
+
+		// Capture context injection metadata (RAG & memory) for debuggability
+		var memoryFacts []string
+		if a.memoryManager != nil {
+			facts, err := a.memoryManager.ListFacts()
+			if err == nil {
+				for _, f := range facts {
+					memoryFacts = append(memoryFacts, f.Content)
+				}
+			}
+		}
+		
+		projectCtx, _ := agent.LoadProjectContext(a.projectRoot, a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
+		
+		// Map active context snapshots into session turn
+		a.currentSession.InjectedContexts = append(a.currentSession.InjectedContexts, session.InjectedContext{
+			MessageIndex:   len(a.currentSession.Messages),
+			ProjectContext: projectCtx,
+			MemoryFacts:    memoryFacts,
+			RAGChunks:      []string{}, // Query dependent, captured at index time
+		})
+	}
+
+	dir := filepath.Join(a.projectRoot, ".lmhub", "sessions")
+	filename := fmt.Sprintf("%s-%s.json", a.currentSession.Mode, a.currentSession.ID)
+	if customName != "" {
+		if !strings.HasSuffix(customName, ".json") {
+			customName += ".json"
+		}
+		filename = customName
+	}
+	path := filepath.Join(dir, filename)
+
+	err := a.currentSession.Save(path)
+	if err != nil {
+		return err
+	}
+
+	if a.cfg.Sessions.MaxHistory > 0 {
+		_ = session.CleanupOld(dir, a.cfg.Sessions.MaxHistory)
+	}
+
+	return nil
+}
+
+// LoadSession loads a saved session from a file.
+func (a *App) LoadSession(nameOrID string) error {
+	dir := filepath.Join(a.projectRoot, ".lmhub", "sessions")
+	path := filepath.Join(dir, nameOrID)
+	if !strings.HasSuffix(path, ".json") {
+		path += ".json"
+	}
+
+	s, err := session.Load(path)
+	if err != nil {
+		// Attempt directory lookup by ID fragment
+		files, re := os.ReadDir(dir)
+		if re == nil {
+			for _, f := range files {
+				if strings.Contains(f.Name(), nameOrID) && strings.HasSuffix(f.Name(), ".json") {
+					path = filepath.Join(dir, f.Name())
+					s, err = session.Load(path)
+					if err == nil {
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+
+	a.currentSession = s
+	a.selectedModelID = s.ModelID
+
+	if s.Mode == "build" {
+		a.activeView = ViewBuild
+		a.buildView.Reset()
+	} else {
+		a.activeView = ViewChat
+		a.chatView.Reset()
+		a.chatView.SetHistory(s.Messages)
+	}
+
+	return nil
 }

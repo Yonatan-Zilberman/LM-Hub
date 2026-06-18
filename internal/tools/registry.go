@@ -119,20 +119,20 @@ func (r *Registry) ValidateArgs(t Tool, args map[string]interface{}) error {
 				return fmt.Errorf("parameter %s must be a boolean", key)
 			}
 		case "number":
-			switch val.(type) {
+			switch v := val.(type) {
 			case float64, float32, int, int64, int32:
 				// Valid number
 			default:
+				_ = v // prevent unused var warning
 				return fmt.Errorf("parameter %s must be a number", key)
 			}
 		case "integer":
-			switch val.(type) {
+			switch v := val.(type) {
 			case int, int64, int32:
 				// Valid integer
 			case float64:
 				// JSON numbers are parsed as float64, check if it's a whole number
-				f := val.(float64)
-				if f != float64(int(f)) {
+				if v != float64(int(v)) {
 					return fmt.Errorf("parameter %s must be an integer", key)
 				}
 			default:

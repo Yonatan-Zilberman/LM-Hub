@@ -33,13 +33,23 @@ Any AI coding agent working on the LM Hub codebase **MUST** strictly adhere to t
 
 ## Current Status
 
-- **Current Phase**: Phase 6 — Memory + Templates
-- **Milestone**: Persistent memory manager, automatic post-session extraction, and prompt template browser operational.
-- **Status**: Completed Phase 6 implementation. Added bbolt-backed memory store for project-scoped and global-scoped facts, post-build/session automatic extraction, and Ctrl+E memory center view overlay. Added prompt template browser overlay (Ctrl+T) with 20 pre-built general templates supporting mode auto-switching and cursor positioning. Added CLI `memory` commands. All unit tests pass cleanly.
+- **Current Phase**: Phase 7 — Polish & Platform (Complete)
+- **Milestone**: Multi-platform support, robust session persistence, full Cobra CLI commands suite, first-run wizard setup, and optional build tags.
+- **Status**: Completed Phase 7 implementation. Added robust session save/load persistence in TUI (Ctrl+S, /save, /load) with budget telemetry snapshotting; refactored CLI entry points to support Cobra commands (`ask`, `plan`, `build`, `memory`, `index`, `config`, `sessions`, `init`); implemented first-run auto-probing setup wizard; structured platform files for Linux and Windows stubs; added build-tag gated (`treesitter`) CGO AST chunking option. All unit tests pass cleanly.
 
 ---
 
 ## Progress Log
+
+### 2026-06-18 (Phase 7 Polish & Platform Complete)
+- Implemented TUI session persistence with JSON file saving/loading in `internal/session/session.go` and directory listing/cleanup in `internal/session/history.go`.
+- Structured and wired session save, load, and auto-save hotkeys/slash commands (`/save`, `/load`, `Ctrl+S`, auto-save on `Ctrl+Q`) in `internal/ui/app.go` and `internal/ui/views/chat.go`.
+- Restructured all application subcommands (`ask`, `plan`, `build`, `memory`, `index`, `config`, `sessions`, `init`) using Cobra CLI library in `cmd/lmhub/cli.go` and `cmd/lmhub/commands.go`.
+- Added headless/non-interactive ask, plan, and build execution modes to the CLI.
+- Extracted and implemented setup wizard in `cmd/lmhub/commands.go` that runs on first startup to initialize `config.yaml`.
+- Created platform support files for Linux (`pkg/platform/linux.go`) and Windows (`pkg/platform/windows.go`), and updated command execution in `internal/tools/shell.go` to be platform-independent.
+- Implemented CGO-gated (`//go:build treesitter`) AST-based chunking option in `internal/rag/chunker_treesitter.go` with sliding window fallbacks.
+- Created `goreleaser.yaml` config, updated `Makefile` build targets, and expanded `README.md` into a detailed quick-start manual.
 
 ### 2026-06-18 (Phase 6 Memory + Templates Complete)
 - Implemented persistent project and global scopes bbolt stores in `internal/memory/store.go`.

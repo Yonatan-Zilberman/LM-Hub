@@ -6,4 +6,5 @@ type Platform interface {
 	ConfigDir() (string, error)
 	DataDir() (string, error)
 	DockerSocket() string
+	ShellArgs(cmd string) (string, []string)
 }

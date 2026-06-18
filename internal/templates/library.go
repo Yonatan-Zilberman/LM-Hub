@@ -40,6 +40,16 @@ func (l *Library) Templates() []Template {
 	return l.templates
 }
 
+// Get searches for a template by name (case-insensitive).
+func (l *Library) Get(name string) (Template, error) {
+	for _, t := range l.templates {
+		if strings.EqualFold(t.Name, name) {
+			return t, nil
+		}
+	}
+	return Template{}, fmt.Errorf("template not found: %s", name)
+}
+
 // LoadUserTemplates walks the specified directory and parses all YAML files.
 func (l *Library) LoadUserTemplates(dir string) error {
 	info, err := os.Stat(dir)

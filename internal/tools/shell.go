@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/yonatanzilberman/lmhub/pkg/platform"
 )
 
 // RunCommandTool executes shell commands in a scoped directory.
@@ -100,27 +102,19 @@ func (t *RunCommandTool) Execute(ctx context.Context, args map[string]interface{
 		}
 	}
 
-	// Determine the shell interpreter to run.
-	shellCmd := "/bin/sh"
-	shellArgs := []string{"-c", cmdStr}
-
-	// Try to match GOOS and preferences
-	if runtime.GOOS == "windows" {
-		shellCmd = "powershell.exe"
-		shellArgs = []string{"-Command", cmdStr}
-	} else {
-		// Detect default preferred shell in AllowedShells
-		for _, s := range t.allowedShell {
-			if s == "zsh" {
-				shellCmd = "/bin/zsh"
-				break
-			}
-			if s == "bash" {
-				shellCmd = "/bin/bash"
-				break
-			}
-		}
+	// Determine the shell interpreter using platform abstractions.
+	var p platform.Platform
+	switch runtime.GOOS {
+	case "darwin":
+		p = platform.NewDarwinPlatform()
+	case "linux":
+		p = platform.NewLinuxPlatform()
+	case "windows":
+		p = platform.NewWindowsPlatform()
+	default:
+		p = platform.NewLinuxPlatform()
 	}
+	shellCmd, shellArgs := p.ShellArgs(cmdStr)
 
 	// Create command with context for timeout/cancellation
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)

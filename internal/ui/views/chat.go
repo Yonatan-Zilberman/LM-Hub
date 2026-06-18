@@ -103,6 +103,17 @@ func (cv *ChatView) Reset() {
 	cv.CurrentTTFT = 0
 }
 
+// AskMode returns the underlying AskMode instance.
+func (cv *ChatView) AskMode() *ask.AskMode {
+	return cv.askMode
+}
+
+// SetHistory replaces the history and refreshes the view content.
+func (cv *ChatView) SetHistory(messages []api.Message) {
+	cv.askMode.SetHistory(messages)
+	cv.refreshContent()
+}
+
 // Update handles message updates.
 func (cv *ChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 	var cmds []tea.Cmd
@@ -122,6 +133,20 @@ func (cv *ChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 		case tea.KeyEnter:
 			input := strings.TrimSpace(cv.textInput.Value())
 			if input == "" {
+				break
+			}
+
+			if strings.HasPrefix(input, "/") {
+				parts := strings.Fields(input)
+				cmdName := parts[0]
+				arg := ""
+				if len(parts) > 1 {
+					arg = strings.Join(parts[1:], " ")
+				}
+				cv.textInput.SetValue("")
+				cmds = append(cmds, func() tea.Msg {
+					return SlashCmdMsg{CmdType: cmdName, Arg: arg}
+				})
 				break
 			}
 
@@ -284,4 +309,10 @@ func (cv *ChatView) View() string {
 		statusText,
 		inputBox,
 	)
+}
+
+// SlashCmdMsg represents a slash command entered in the chat interface.
+type SlashCmdMsg struct {
+	CmdType string
+	Arg     string
 }
