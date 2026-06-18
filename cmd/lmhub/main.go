@@ -13,10 +13,12 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/agent"
 	"github.com/yonatanzilberman/lmhub/internal/api"
 	"github.com/yonatanzilberman/lmhub/internal/config"
+	"github.com/yonatanzilberman/lmhub/internal/memory"
 	"github.com/yonatanzilberman/lmhub/internal/modes/ask"
 	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/modelmanager"
 	"github.com/yonatanzilberman/lmhub/internal/rag"
+	"github.com/yonatanzilberman/lmhub/internal/templates"
 	"github.com/yonatanzilberman/lmhub/internal/ui"
 )
 
@@ -36,6 +38,111 @@ func main() {
 
 	// Check for CLI subcommands
 	args := flag.Args()
+
+	if len(args) > 0 && args[0] == "memory" {
+		if len(args) < 2 {
+			fmt.Println("Usage: lmhub memory [list|add|forget|clear]")
+			os.Exit(1)
+		}
+
+		projectRoot, err := os.Getwd()
+		if err != nil {
+			projectRoot = "."
+		}
+
+		lmhubDir := filepath.Join(projectRoot, ".lmhub")
+		_ = os.MkdirAll(lmhubDir, 0755)
+
+		projMemDBPath := filepath.Join(lmhubDir, "memory.db")
+		projMemDB, err := bbolt.Open(projMemDBPath, 0600, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening project memory database: %v\n", err)
+			os.Exit(1)
+		}
+		defer projMemDB.Close()
+
+		projStore, err := memory.NewStore(projMemDB)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error initializing project memory store: %v\n", err)
+			os.Exit(1)
+		}
+
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting user home dir: %v\n", err)
+			os.Exit(1)
+		}
+		globalDir := filepath.Join(home, ".config", "lmhub")
+		_ = os.MkdirAll(globalDir, 0755)
+
+		globalMemDBPath := filepath.Join(globalDir, "global-memory.db")
+		globalMemDB, err := bbolt.Open(globalMemDBPath, 0600, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening global memory database: %v\n", err)
+			os.Exit(1)
+		}
+		defer globalMemDB.Close()
+
+		globalStore, err := memory.NewStore(globalMemDB)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error initializing global memory store: %v\n", err)
+			os.Exit(1)
+		}
+
+		mm := memory.NewMemoryManager(projStore, globalStore, projectRoot, &cfg.Memory, client)
+
+		subCmd := args[1]
+		switch subCmd {
+		case "list":
+			facts, err := mm.ListFacts()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error listing facts: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Memory Facts for project (%s):\n", projectRoot)
+			for _, f := range facts {
+				sourceBadge := "auto"
+				if f.Source == "user" {
+					sourceBadge = "user"
+				}
+				fmt.Printf("[%s] [%s] %s (confidence: %.2f, use count: %d)\n", f.ID, sourceBadge, f.Content, f.Confidence, f.UseCount)
+			}
+		case "add":
+			if len(args) < 3 {
+				fmt.Println("Usage: lmhub memory add \"fact text\"")
+				os.Exit(1)
+			}
+			err := mm.AddFact("project", args[2], "user", 1.0)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error adding fact: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Fact successfully added.")
+		case "forget":
+			if len(args) < 3 {
+				fmt.Println("Usage: lmhub memory forget <id>")
+				os.Exit(1)
+			}
+			err := mm.ForgetFact(args[2])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error deleting fact: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Fact deleted successfully.")
+		case "clear":
+			err := mm.ClearProject()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error clearing project facts: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Project facts cleared.")
+		default:
+			fmt.Printf("Unknown memory command: %s\n", subCmd)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if len(args) > 0 && args[0] == "index" {
 		indexFlags := flag.NewFlagSet("index", flag.ExitOnError)
 		watchOpt := indexFlags.Bool("watch", false, "Index + watch for changes")
@@ -218,6 +325,55 @@ func main() {
 	}
 	retriever := rag.NewRetriever(client, ragStore, embModel, cfg.RAG.MinScore)
 
+	// Initialize Memory database
+	projMemDBPath := filepath.Join(lmhubDir, "memory.db")
+	projMemDB, err := bbolt.Open(projMemDBPath, 0600, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening project memory database: %v\n", err)
+		os.Exit(1)
+	}
+	defer projMemDB.Close()
+
+	projMemStore, err := memory.NewStore(projMemDB)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing project memory store: %v\n", err)
+		os.Exit(1)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting user home dir: %v\n", err)
+		os.Exit(1)
+	}
+	globalDir := filepath.Join(home, ".config", "lmhub")
+	_ = os.MkdirAll(globalDir, 0755)
+
+	globalMemDBPath := filepath.Join(globalDir, "global-memory.db")
+	globalMemDB, err := bbolt.Open(globalMemDBPath, 0600, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening global memory database: %v\n", err)
+		os.Exit(1)
+	}
+	defer globalMemDB.Close()
+
+	globalMemStore, err := memory.NewStore(globalMemDB)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing global memory store: %v\n", err)
+		os.Exit(1)
+	}
+
+	memManager := memory.NewMemoryManager(projMemStore, globalMemStore, projectRoot, &cfg.Memory, client)
+
+	// Initialize templates library
+	userTmplDir := ""
+	if cfg.Templates.UserDir != "" {
+		userTmplDir = cfg.Templates.UserDir
+	}
+	tmplLibrary, err := templates.NewLibrary(cfg.Templates.BuiltinEnabled, userTmplDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load user templates: %v\n", err)
+	}
+
 	// 5. Initialize Context Manager and Budget Manager
 	ctxManager, err := agent.NewContextManager()
 	if err != nil {
@@ -231,7 +387,7 @@ func main() {
 	planMode := plan.NewPlanMode(client, manager, ctxManager, budgetManager, cfg, retriever)
 
 	// 7. Initialize Bubbletea Application
-	appModel, err := ui.NewApp(cfg, client, manager, askMode, planMode, budgetManager, ctxManager, retriever, projectRoot)
+	appModel, err := ui.NewApp(cfg, client, manager, askMode, planMode, budgetManager, ctxManager, retriever, memManager, tmplLibrary, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing TUI application: %v\n", err)
 		os.Exit(1)

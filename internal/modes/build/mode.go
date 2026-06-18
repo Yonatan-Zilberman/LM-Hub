@@ -12,6 +12,7 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/agent"
 	"github.com/yonatanzilberman/lmhub/internal/api"
 	"github.com/yonatanzilberman/lmhub/internal/config"
+	"github.com/yonatanzilberman/lmhub/internal/memory"
 	"github.com/yonatanzilberman/lmhub/internal/modelmanager"
 	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/safety"
@@ -41,6 +42,7 @@ type BuildMode struct {
 	classifier         *safety.Classifier
 	history            []api.Message
 	session            *BuildSession
+	memoryManager      *memory.MemoryManager
 	consecutiveErrors  int
 	confirmCallback    func(msg safety.ConfirmMsg) bool
 	updateCallback     func(msg AgentStepMsg)
@@ -55,6 +57,7 @@ func NewBuildMode(
 	cfg *config.Config,
 	reg *tools.Registry,
 	retriever *rag.Retriever,
+	memManager *memory.MemoryManager,
 	confirmCB func(msg safety.ConfirmMsg) bool,
 	updateCB func(msg AgentStepMsg),
 ) *BuildMode {
@@ -68,6 +71,7 @@ func NewBuildMode(
 		retriever:       retriever,
 		classifier:      safety.NewClassifier(cfg.Tools.Shell.Blocklist),
 		history:         make([]api.Message, 0),
+		memoryManager:   memManager,
 		confirmCallback: confirmCB,
 		updateCallback:  updateCB,
 	}
@@ -393,6 +397,9 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 					}
 				}
 
+				if bm.memoryManager != nil {
+					_ = bm.memoryManager.ExtractAndStore(ctx, modelID, bm.history)
+				}
 				bm.updateCallback(AgentStepMsg{
 					StepType: "finished",
 					Content:  fullResponse,

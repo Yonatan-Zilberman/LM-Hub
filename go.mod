@@ -17,6 +17,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tiktoken-go/tokenizer v0.8.0
 	go.etcd.io/bbolt v1.4.3
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -105,6 +106,5 @@ require (
 	golang.org/x/term v0.43.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )

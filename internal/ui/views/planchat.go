@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/yonatanzilberman/lmhub/internal/memory"
 	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/ui/styles"
 )
@@ -38,10 +39,11 @@ type PlanChatView struct {
 	projectRoot  string
 	errorMsg     string
 	rawResponse  string
+	memManager   *memory.MemoryManager
 }
 
 // NewPlanChatView creates a new PlanChatView.
-func NewPlanChatView(pm *plan.PlanMode, projectRoot string) *PlanChatView {
+func NewPlanChatView(pm *plan.PlanMode, projectRoot string, mm *memory.MemoryManager) *PlanChatView {
 	ti := textinput.New()
 	ti.Placeholder = "Enter a task description to generate a structured implementation plan..."
 	ti.Focus()
@@ -60,6 +62,7 @@ func NewPlanChatView(pm *plan.PlanMode, projectRoot string) *PlanChatView {
 		spinner:     s,
 		viewport:    vp,
 		projectRoot: projectRoot,
+		memManager:  mm,
 	}
 }
 
@@ -70,6 +73,12 @@ func (pcv *PlanChatView) SetSize(w, h int) {
 	pcv.viewport.Width = w
 	pcv.viewport.Height = h - 10
 	pcv.textInput.Width = w - 16
+}
+
+// SetInputValue updates the text input value.
+func (pcv *PlanChatView) SetInputValue(val string) {
+	pcv.textInput.SetValue(val)
+	pcv.textInput.CursorEnd()
 }
 
 // Reset clears the input and previous error status.
@@ -139,7 +148,11 @@ func (pcv *PlanChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 func (pcv *PlanChatView) generatePlanCmd(modelID, task string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		p, raw, err := pcv.planMode.GeneratePlan(ctx, modelID, task, pcv.projectRoot, "", "")
+		var memoryFacts string
+		if pcv.memManager != nil {
+			memoryFacts = pcv.memManager.InjectFacts()
+		}
+		p, raw, err := pcv.planMode.GeneratePlan(ctx, modelID, task, pcv.projectRoot, "", memoryFacts)
 		if err != nil {
 			return PlanErrorMsg{Err: err, RawResponse: raw}
 		}

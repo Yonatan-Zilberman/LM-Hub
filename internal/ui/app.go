@@ -11,6 +11,7 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/agent"
 	"github.com/yonatanzilberman/lmhub/internal/api"
 	"github.com/yonatanzilberman/lmhub/internal/config"
+	"github.com/yonatanzilberman/lmhub/internal/memory"
 	"github.com/yonatanzilberman/lmhub/internal/modes/ask"
 	"github.com/yonatanzilberman/lmhub/internal/modes/plan"
 	"github.com/yonatanzilberman/lmhub/internal/modes/build"
@@ -18,6 +19,7 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/safety"
 	"github.com/yonatanzilberman/lmhub/internal/tools"
 	"github.com/yonatanzilberman/lmhub/internal/rag"
+	"github.com/yonatanzilberman/lmhub/internal/templates"
 	"github.com/yonatanzilberman/lmhub/internal/ui/components"
 	"github.com/yonatanzilberman/lmhub/internal/ui/styles"
 	"github.com/yonatanzilberman/lmhub/internal/ui/views"
@@ -78,6 +80,16 @@ type App struct {
 	showUndoHistory bool
 	undoHistoryView *views.UndoHistoryView
 
+	// Memory overlays
+	memoryManager   *memory.MemoryManager
+	memoryView      *views.MemoryView
+	showMemory      bool
+
+	// Templates overlays
+	templateLibrary *templates.Library
+	templatesView   *views.TemplatesView
+	showTemplates   bool
+
 	// Warning banners
 	parseWarningMsg string
 
@@ -95,14 +107,16 @@ func NewApp(
 	bm *agent.BudgetManager,
 	cm *agent.ContextManager,
 	retriever *rag.Retriever,
+	memManager *memory.MemoryManager,
+	tmplLib *templates.Library,
 	projectRoot string,
 ) (*App, error) {
-	chat, err := views.NewChatView(am)
+	chat, err := views.NewChatView(am, memManager)
 	if err != nil {
 		return nil, err
 	}
 
-	planChat := views.NewPlanChatView(pm, projectRoot)
+	planChat := views.NewPlanChatView(pm, projectRoot, memManager)
 	planView := views.NewPlanView(projectRoot)
 
 	// Initialize Build Mode and Tools Registry
@@ -139,7 +153,7 @@ func NewApp(
 	reg.Register(tools.NewWebSearchTool(cfg.Tools.Web.SearchProvider, cfg.Tools.Web.SerperAPIKey))
 	reg.Register(tools.NewWebFetchTool(cfg.Tools.Web.FetchTimeoutSeconds, cfg.Tools.Web.CacheTTLMinutes))
 
-	buildMode := build.NewBuildMode(client, mm, cm, bm, cfg, reg, retriever, nil, nil)
+	buildMode := build.NewBuildMode(client, mm, cm, bm, cfg, reg, retriever, memManager, nil, nil)
 	buildView, err := views.NewBuildView(buildMode)
 	if err != nil {
 		return nil, err
@@ -162,6 +176,10 @@ func NewApp(
 		buildMode:       buildMode,
 		modelSelectView: views.NewModelSelectView(mm),
 		metricsView:     views.NewMetricsView(mm.Metrics()),
+		memoryManager:   memManager,
+		memoryView:      views.NewMemoryView(memManager),
+		templateLibrary: tmplLib,
+		templatesView:   views.NewTemplatesView(tmplLib),
 		activeView:      ViewHome,
 		isOnline:        false,
 	}
@@ -268,6 +286,43 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 	}
 
+	// 3. Check Memory Fact Center overlay input
+	if a.showMemory && a.memoryView != nil {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			cmd, shouldClose, shouldRefresh := a.memoryView.HandleKey(keyMsg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if shouldClose {
+				a.showMemory = false
+			}
+			if shouldRefresh {
+				// Refresh the TUI displays if a fact is updated
+			}
+			return a, tea.Batch(cmds...)
+		}
+		return a, nil
+	}
+
+	// 4. Check Prompt Templates Browser overlay input
+	if a.showTemplates && a.templatesView != nil {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			cmd, shouldClose, applyMsg := a.templatesView.HandleKey(keyMsg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if shouldClose {
+				a.showTemplates = false
+			}
+			if applyMsg != nil {
+				// Dispatch the apply message back to our update loop
+				cmds = append(cmds, func() tea.Msg { return applyMsg })
+			}
+			return a, tea.Batch(cmds...)
+		}
+		return a, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
@@ -282,6 +337,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.buildView.SetSize(msg.Width, msg.Height)
 		a.modelSelectView.SetSize(msg.Width, msg.Height)
 		a.metricsView.SetSize(msg.Width, msg.Height)
+		a.memoryView.SetSize(msg.Width, msg.Height)
+		a.templatesView.SetSize(msg.Width, msg.Height)
 
 		if a.confirmView != nil {
 			a.confirmView.SetSize(msg.Width, msg.Height)
@@ -412,6 +469,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.activeView = ViewMetrics
 			}
 
+		case tea.KeyCtrlE:
+			if a.memoryView != nil {
+				a.memoryView.Refresh()
+				a.showMemory = !a.showMemory
+			}
+
+		case tea.KeyCtrlT:
+			if a.templatesView != nil {
+				a.templatesView.Refresh()
+				a.showTemplates = !a.showTemplates
+			}
+
 		case tea.KeyCtrlL:
 			switch a.activeView {
 			case ViewChat:
@@ -425,10 +494,51 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := a.chatView.HandleChannelReader(msg)
 		return a, cmd
 
+	case views.TemplateApplyMsg:
+		a.showTemplates = false
+		tmpl := msg.Template
+		switch tmpl.Mode {
+		case "ask":
+			a.activeView = ViewChat
+			a.chatView.Reset()
+			a.chatView.SetInputValue(tmpl.Prompt)
+		case "plan":
+			a.activeView = ViewPlanChat
+			a.planChatView.Reset()
+			a.planChatView.SetInputValue(tmpl.Prompt)
+			
+			planModel := a.cfg.ModeModels.Plan
+			if planModel != "" && planModel != a.selectedModelID {
+				a.isLoadingModel = true
+				a.modelLoadStatus = fmt.Sprintf("Auto-switching to Plan mode model: %s...", planModel)
+				a.modelStatusChan = make(chan string, 10)
+				cmds = append(cmds, a.loadModelCmd(planModel, 8192))
+				cmds = append(cmds, a.readNextModelStatusCmd())
+			}
+		case "build":
+			a.activeView = ViewBuild
+			a.buildView.Reset()
+			a.buildView.SetInputValue(tmpl.Prompt)
+
+			buildModel := a.cfg.ModeModels.Build
+			if buildModel != "" && buildModel != a.selectedModelID {
+				a.isLoadingModel = true
+				a.modelLoadStatus = fmt.Sprintf("Auto-switching to Build mode model: %s...", buildModel)
+				a.modelStatusChan = make(chan string, 10)
+				cmds = append(cmds, a.loadModelCmd(buildModel, 32768))
+				cmds = append(cmds, a.readNextModelStatusCmd())
+			}
+		}
+		return a, tea.Batch(cmds...)
+
 	case views.BuildChannelReaderMsg:
 		gitStatus := ""
 		projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
-		cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, "")
+		memoryFacts := ""
+		if a.memoryManager != nil {
+			memoryFacts = a.memoryManager.InjectFacts()
+		}
+		cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, memoryFacts)
 		return a, cmd
 
 	case build.AgentStepMsg:
@@ -437,7 +547,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		gitStatus := ""
 		projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
-		cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, "")
+		memoryFacts := ""
+		if a.memoryManager != nil {
+			memoryFacts = a.memoryManager.InjectFacts()
+		}
+		cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, memoryFacts)
 		return a, cmd
 	}
 
@@ -456,7 +570,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case ViewBuild:
 			gitStatus := ""
 			projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
-			cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, "")
+			memoryFacts := ""
+			if a.memoryManager != nil {
+				memoryFacts = a.memoryManager.InjectFacts()
+			}
+			cmd, _ := a.buildView.Update(msg, a.selectedModelID, gitStatus, projectContext, memoryFacts)
 			cmds = append(cmds, cmd)
 		case ViewModelSelect:
 			cmd, _ := a.modelSelectView.Update(msg)
@@ -499,6 +617,12 @@ func (a *App) View() string {
 	}
 	if a.showUndoHistory && a.undoHistoryView != nil {
 		return a.undoHistoryView.View()
+	}
+	if a.showMemory && a.memoryView != nil {
+		return a.memoryView.View()
+	}
+	if a.showTemplates && a.templatesView != nil {
+		return a.templatesView.View()
 	}
 
 	// 2. Top Mode Tab Selector Header
@@ -574,9 +698,13 @@ func (a *App) View() string {
 		
 		sysTokens := 400  // baseline estimate
 		
-		// Load actual project context tokens
+		// Load actual project context and memory tokens
 		projectCtx, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
-		alloc := a.budgetManager.Allocate(projectCtx, "", "")
+		memFacts := ""
+		if a.memoryManager != nil {
+			memFacts = a.memoryManager.InjectFacts()
+		}
+		alloc := a.budgetManager.Allocate(projectCtx, memFacts, "")
 
 		histTokens := m.TokensUsed - sysTokens - alloc.ProjectTokens - alloc.MemoryTokens - alloc.RAGTokens
 		if histTokens < 0 {

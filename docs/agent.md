@@ -33,13 +33,23 @@ Any AI coding agent working on the LM Hub codebase **MUST** strictly adhere to t
 
 ## Current Status
 
-- **Current Phase**: Phase 5 — RAG & Embeddings
-- **Milestone**: Codebase indexing and context-aware retrieval operational.
-- **Status**: Completed Phase 5 implementation. Added embeddings client for `/v1/embeddings`, sliding-window tokenizer-based chunker, bbolt-backed vector/metadata store, project directory walker/indexer, semantic retriever, and fsnotify-based file watcher for incremental indexing. Added CLI `index` commands (`--watch`, `--clear`, `--stats`) and auto-loaded embedding model in LM Studio. Wired semantic retrieval into Plan and Build modes. All unit tests pass cleanly.
+- **Current Phase**: Phase 6 — Memory + Templates
+- **Milestone**: Persistent memory manager, automatic post-session extraction, and prompt template browser operational.
+- **Status**: Completed Phase 6 implementation. Added bbolt-backed memory store for project-scoped and global-scoped facts, post-build/session automatic extraction, and Ctrl+E memory center view overlay. Added prompt template browser overlay (Ctrl+T) with 20 pre-built general templates supporting mode auto-switching and cursor positioning. Added CLI `memory` commands. All unit tests pass cleanly.
 
 ---
 
 ## Progress Log
+
+### 2026-06-18 (Phase 6 Memory + Templates Complete)
+- Implemented persistent project and global scopes bbolt stores in `internal/memory/store.go`.
+- Implemented `MemoryManager` coordination engine in `internal/memory/memory.go`.
+- Implemented LLM-based post-session and post-build fact extractor in `internal/memory/extractor.go`.
+- Implemented interactive Memory Fact Center view overlay (`Ctrl+E`) in `internal/ui/views/memory.go`.
+- Implemented prompt template browser overlay (`Ctrl+T`) in `internal/ui/views/templates.go` with 20 general-based templates.
+- Configured template fuzzy searching, applying templates, and auto-switching modes and loading pinned models in `internal/ui/app.go`.
+- Wired memory subcommands (`list`, `add`, `forget`, `clear`) in `cmd/lmhub/main.go`.
+- Verified build compiles cleanly and 100% of unit tests pass.
 
 ### 2026-06-18 (Phase 5 RAG & Embeddings Complete)
 - Implemented `/v1/embeddings` API client in `internal/api/embeddings.go`.

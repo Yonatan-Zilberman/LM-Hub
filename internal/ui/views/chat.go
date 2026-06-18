@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/yonatanzilberman/lmhub/internal/api"
+	"github.com/yonatanzilberman/lmhub/internal/memory"
 	"github.com/yonatanzilberman/lmhub/internal/modes/ask"
 	"github.com/yonatanzilberman/lmhub/internal/ui/components"
 	"github.com/yonatanzilberman/lmhub/internal/ui/styles"
@@ -41,6 +42,7 @@ type ChatView struct {
 	height      int
 	isStreaming bool
 	stream      <-chan api.StreamChunk
+	memManager  *memory.MemoryManager
 	
 	// Streaming metrics
 	CurrentSpeed float64
@@ -51,7 +53,7 @@ type ChatView struct {
 }
 
 // NewChatView creates a new ChatView instance.
-func NewChatView(am *ask.AskMode) (*ChatView, error) {
+func NewChatView(am *ask.AskMode, mm *memory.MemoryManager) (*ChatView, error) {
 	ti := textinput.New()
 	ti.Placeholder = "Type a message and press Enter..."
 	ti.Focus()
@@ -66,10 +68,11 @@ func NewChatView(am *ask.AskMode) (*ChatView, error) {
 	vp.SetContent("Conversation started. Ask anything!")
 
 	return &ChatView{
-		askMode:   am,
-		textInput: ti,
-		viewport:  vp,
-		renderer:  mr,
+		askMode:    am,
+		textInput:  ti,
+		viewport:   vp,
+		renderer:   mr,
+		memManager: mm,
 	}, nil
 }
 
@@ -82,6 +85,12 @@ func (cv *ChatView) SetSize(w, h int) {
 	cv.viewport.Width = w
 	cv.viewport.Height = h - 8
 	cv.textInput.Width = w - 10
+}
+
+// SetInputValue updates the text input value.
+func (cv *ChatView) SetInputValue(val string) {
+	cv.textInput.SetValue(val)
+	cv.textInput.CursorEnd()
 }
 
 // Reset clears current chat view logs and ask mode history.
@@ -168,7 +177,11 @@ func (cv *ChatView) startChatStreamCmd(modelID, text string) tea.Cmd {
 		
 		// Setup call options
 		// Default temperature 0.7, max tokens 8192
-		stream, logMsg, err := cv.askMode.SendUserMessage(ctx, modelID, text, ".", "macOS", "zsh", "", "", 0.7, 8192)
+		var memoryFacts string
+		if cv.memManager != nil {
+			memoryFacts = cv.memManager.InjectFacts()
+		}
+		stream, logMsg, err := cv.askMode.SendUserMessage(ctx, modelID, text, ".", "macOS", "zsh", "", memoryFacts, 0.7, 8192)
 		if err != nil {
 			return ChatErrorMsg{Err: err}
 		}

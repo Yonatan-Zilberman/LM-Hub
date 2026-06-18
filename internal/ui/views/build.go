@@ -89,6 +89,12 @@ func (bv *BuildView) SetSize(w, h int) {
 	bv.diffView.SetSize(rightWidth, h - 10)
 }
 
+// SetInputValue updates the text input value.
+func (bv *BuildView) SetInputValue(val string) {
+	bv.textInput.SetValue(val)
+	bv.textInput.CursorEnd()
+}
+
 // Reset clears active logs and session metrics.
 func (bv *BuildView) Reset() {
 	bv.buildMode.Reset()
@@ -241,7 +247,7 @@ func (bv *BuildView) refreshViewport() {
 	bv.viewport.GotoBottom()
 }
 
-func (bv *BuildView) renderToolActivity(width int) string {
+func (bv *BuildView) renderToolActivity() string {
 	session := bv.buildMode.Session()
 	if session == nil {
 		return "No activity yet. Describe a task below to start building!"
@@ -339,7 +345,7 @@ func (bv *BuildView) View() string {
 	if bv.showDiff {
 		rightContent = bv.diffView.View()
 	} else {
-		rightContent = bv.renderToolActivity(rightWidth)
+		rightContent = bv.renderToolActivity()
 	}
 	rightBox := theme.BoxStyle.Width(rightWidth).Height(bv.height - 10).Render(rightContent)
 

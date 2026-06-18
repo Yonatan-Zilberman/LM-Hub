@@ -6,8 +6,8 @@ This file tracks the active status of the LM Hub codebase, detailing completed p
 
 ## Active Status
 
-* **Current Phase**: Phase 5 Complete (RAG & Embeddings)
-* **Status**: Compilation is clean, 100% of unit tests are passing. RAG indexing and semantic retrieval are fully wired into Plan and Build modes.
+* **Current Phase**: Phase 6 Complete (Memory + Templates)
+* **Status**: Compilation is clean, 100% of unit tests are passing. RAG indexing, semantic retrieval, persistent memory managers, fact auto-extraction, and prompt templates browser are fully wired.
 
 ---
 

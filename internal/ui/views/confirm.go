@@ -65,9 +65,12 @@ func (cv *ConfirmView) View() string {
 	}
 
 	if cv.msg.Diff != "" {
-		sb.WriteString("\n" + theme.HelpStyle.Render("Proposed Changes:") + "\n")
+		sb.WriteString("\n")
+		sb.WriteString(theme.HelpStyle.Render("Proposed Changes:"))
+		sb.WriteString("\n")
 		dv := components.NewDiffView(cv.msg.Diff, boxWidth-4, 10)
-		sb.WriteString(dv.View() + "\n")
+		sb.WriteString(dv.View())
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("\n")
