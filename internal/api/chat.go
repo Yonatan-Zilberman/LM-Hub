@@ -67,8 +67,8 @@ func (c *Client) ChatCompletionStream(ctx context.Context, req ChatRequest) (<-c
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	httpReq.Header.Set("Connection", "keep-alive")
 
-	// Execute request
-	httpClient := &http.Client{}
+	// Execute request using the configured HTTP client from Resty
+	httpClient := c.Resty.GetClient()
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send streaming chat request: %w", err)
@@ -92,22 +92,48 @@ func (c *Client) ChatCompletionStream(ctx context.Context, req ChatRequest) (<-c
 		tokenCount := 0
 		var ttftMs int
 
+		type lineResult struct {
+			line string
+			err  error
+		}
+		lineCh := make(chan lineResult, 1)
+		go func() {
+			defer close(lineCh)
+			for {
+				line, err := reader.ReadString('\n')
+				select {
+				case lineCh <- lineResult{line: line, err: err}:
+					if err != nil {
+						return
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
 		for {
 			select {
 			case <-ctx.Done():
 				outChan <- StreamChunk{Error: ctx.Err()}
 				return
-			default:
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					if err == io.EOF {
+			case res, ok := <-lineCh:
+				if !ok {
+					return
+				}
+				if res.err != nil {
+					if ctx.Err() != nil {
+						outChan <- StreamChunk{Error: ctx.Err()}
 						return
 					}
-					outChan <- StreamChunk{Error: fmt.Errorf("error reading stream: %w", err)}
+					if res.err == io.EOF {
+						return
+					}
+					outChan <- StreamChunk{Error: fmt.Errorf("error reading stream: %w", res.err)}
 					return
 				}
 
-				line = strings.TrimSpace(line)
+				line := strings.TrimSpace(res.line)
 				if line == "" {
 					continue
 				}
@@ -124,18 +150,15 @@ func (c *Client) ChatCompletionStream(ctx context.Context, req ChatRequest) (<-c
 
 				var chunk ChatResponse
 				if err := json.Unmarshal([]byte(dataStr), &chunk); err != nil {
-					// Some chunks might be malformed or empty, just log or send error
 					outChan <- StreamChunk{Error: fmt.Errorf("failed to decode stream chunk: %w", err)}
 					return
 				}
 
-				// Measure TTFT
 				if tokenCount == 0 {
 					firstTokenTime = time.Now()
 					ttftMs = int(firstTokenTime.Sub(startTime).Milliseconds())
 				}
 
-				// Extract delta content
 				if len(chunk.Choices) > 0 {
 					deltaContent := chunk.Choices[0].Delta.Content
 					if deltaContent != "" {

@@ -30,25 +30,30 @@ type Theme struct {
 	BoxStyle          lipgloss.Style
 	ActiveBoxStyle    lipgloss.Style
 	HelpStyle         lipgloss.Style
+
+	PanelHeaderStyle    lipgloss.Style
+	KeybindBarStyle     lipgloss.Style
+	DimmedOverlayStyle  lipgloss.Style
+	FloatingModalStyle  lipgloss.Style
 }
 
 // DefaultTheme returns the standard dark theme for LM Hub.
 var DefaultTheme Theme
 
 func init() {
-	// Sleek Dracula/Tokyonight-inspired dark palette
+	// Sleek dark palette with muted grays and single cyan accent
 	DefaultTheme = Theme{
-		PrimaryColor:   lipgloss.Color("#bd93f9"), // Purple
-		SecondaryColor: lipgloss.Color("#ff79c6"), // Pink
-		AccentColor:    lipgloss.Color("#8be9fd"), // Cyan
-		BgColor:        lipgloss.Color("#282a36"), // Dark BG
-		FgColor:        lipgloss.Color("#f8f8f2"), // Warm White
+		PrimaryColor:   lipgloss.Color("#888888"), // Muted Gray
+		SecondaryColor: lipgloss.Color("#555555"), // Darker Muted Gray
+		AccentColor:    lipgloss.Color("#00d2ff"), // Bright Cyan Accent
+		BgColor:        lipgloss.Color("#161616"), // Very Dark Charcoal BG
+		FgColor:        lipgloss.Color("#cccccc"), // Soft Gray Fg
 		
-		SuccessColor: lipgloss.Color("#50fa7b"), // Green
-		WarningColor: lipgloss.Color("#f1fa8c"), // Yellow
-		DangerColor:  lipgloss.Color("#ff5555"), // Red
+		SuccessColor: lipgloss.Color("#22aa55"), // Green
+		WarningColor: lipgloss.Color("#ddaa22"), // Orange/Yellow
+		DangerColor:  lipgloss.Color("#cc3333"), // Red
 		
-		BorderColor: lipgloss.Color("#44475a"), // Muted Purple-Gray
+		BorderColor: lipgloss.Color("#333333"), // Dark gray borders
 	}
 
 	theme := &DefaultTheme
@@ -56,11 +61,11 @@ func init() {
 	// Titles & Headers
 	theme.TitleStyle = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(theme.PrimaryColor).
+		Foreground(theme.AccentColor).
 		Padding(0, 1)
 
 	theme.SubtitleStyle = lipgloss.NewStyle().
-		Foreground(theme.SecondaryColor).
+		Foreground(theme.PrimaryColor).
 		Italic(true)
 
 	theme.NormalTextStyle = lipgloss.NewStyle().
@@ -73,18 +78,18 @@ func init() {
 	theme.ModeBadgeStyle = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#000000")).
-		Background(theme.PrimaryColor).
+		Background(theme.AccentColor).
 		Padding(0, 1)
 
 	// Status Bar
 	theme.StatusBarLeft = lipgloss.NewStyle().
 		Foreground(theme.FgColor).
-		Background(lipgloss.Color("#343746")).
+		Background(lipgloss.Color("#242424")).
 		Padding(0, 1)
 
 	theme.StatusBarRight = lipgloss.NewStyle().
 		Foreground(theme.FgColor).
-		Background(lipgloss.Color("#44475a")).
+		Background(lipgloss.Color("#333333")).
 		Padding(0, 1)
 
 	theme.StatusBarActive = lipgloss.NewStyle().
@@ -98,17 +103,36 @@ func init() {
 		Background(theme.DangerColor).
 		Padding(0, 1)
 
-	// Box / Containers
+	// Box / Containers (Sharp borders as requested)
 	theme.BoxStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+		Border(lipgloss.NormalBorder()).
 		BorderForeground(theme.BorderColor).
 		Padding(1)
 
 	theme.ActiveBoxStyle = theme.BoxStyle.Copy().
-		BorderForeground(theme.PrimaryColor)
+		BorderForeground(theme.AccentColor)
 
 	// Help Text
 	theme.HelpStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#6272a4")).
+		Foreground(lipgloss.Color("#555555")).
 		Italic(true)
+
+	theme.PanelHeaderStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(theme.AccentColor).
+		Background(lipgloss.Color("#242424")).
+		Padding(0, 1)
+
+	theme.KeybindBarStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#777777")).
+		Background(theme.BgColor).
+		Padding(0, 1)
+
+	theme.DimmedOverlayStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#444444"))
+
+	theme.FloatingModalStyle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(theme.AccentColor).
+		Padding(1, 2)
 }

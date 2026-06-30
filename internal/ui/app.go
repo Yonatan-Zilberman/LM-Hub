@@ -71,28 +71,35 @@ type App struct {
 	selectedModelID string
 	isOnline        bool
 
+	cachedProjectCtx  string
+	cachedMemoryFacts string
+	cachedAllocation  agent.BudgetAllocation
+	lastCacheTime     time.Time
+
 	isLoadingModel  bool
 	modelLoadStatus string
 	modelStatusChan chan string
 
-	// Safety overlays
-	showConfirm     bool
+	overlays OverlayManager
+	layout   *LayoutManager
+
+	// Safety overlays (views kept on App; visibility tracked in overlays)
 	confirmMsg      safety.ConfirmMsg
 	confirmView     *views.ConfirmView
 
-	// Undo overlays
-	showUndoHistory bool
 	undoHistoryView *views.UndoHistoryView
 
-	// Memory overlays
 	memoryManager   *memory.MemoryManager
 	memoryView      *views.MemoryView
-	showMemory      bool
 
-	// Templates overlays
 	templateLibrary *templates.Library
 	templatesView   *views.TemplatesView
-	showTemplates   bool
+
+	helpView        *views.HelpView
+
+	// AskUser state
+	showAskUser     bool
+	askUserMsg      safety.AskUserMsg
 
 	// Warning banners
 	parseWarningMsg string
@@ -187,16 +194,37 @@ func NewApp(
 		memoryView:      views.NewMemoryView(memManager),
 		templateLibrary: tmplLib,
 		templatesView:   views.NewTemplatesView(tmplLib),
+		helpView:        views.NewHelpView(),
 		activeView:      ViewHome,
 		isOnline:        false,
 		projectRoot:     projectRoot,
+		layout:          NewLayoutManager(),
 	}
+
+	askUserCallback := func(question string) (string, error) {
+		ch := make(chan string, 1)
+		app.askUserMsg = safety.AskUserMsg{
+			Question:     question,
+			ResponseChan: ch,
+		}
+		app.showAskUser = true
+		app.buildView.SetWaitingForUser(true)
+
+		// Wait blocks the background execution loop until user sets the channel response
+		answer := <-ch
+		app.showAskUser = false
+		app.buildView.SetWaitingForUser(false)
+		return answer, nil
+	}
+
+	// Register the AskUserTool
+	app.registry.Register(tools.NewAskUserTool(askUserCallback))
 
 	// Configure build mode confirmation callback to hook TUI overlays
 	app.buildMode.SetConfirmCallback(func(msg safety.ConfirmMsg) bool {
 		app.confirmMsg = msg
 		app.confirmView = views.NewConfirmView(msg)
-		app.showConfirm = true
+		app.overlays.ShowConfirm = true
 
 		if msg.Diff != "" {
 			app.buildView.SetDiff(msg.Diff)
@@ -206,6 +234,8 @@ func NewApp(
 		approved := <-msg.ResponseChan
 		return approved
 	})
+
+	app.buildMode.SetAskUserCallback(askUserCallback)
 
 	// Try using pinned model if set in config
 	if cfg.ModeModels.Ask != "" {
@@ -243,19 +273,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	// 1. Check Safety Confirmation Modal overlay input
-	if a.showConfirm {
+	if a.overlays.ShowConfirm {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			switch keyMsg.String() {
 			case "y", "Y":
 				a.confirmMsg.ResponseChan <- true
-				a.showConfirm = false
+				a.overlays.ShowConfirm = false
 			case "n", "N":
 				a.confirmMsg.ResponseChan <- false
-				a.showConfirm = false
+				a.overlays.ShowConfirm = false
 			default:
 				if keyMsg.Type == tea.KeyEsc {
 					a.confirmMsg.ResponseChan <- false
-					a.showConfirm = false
+					a.overlays.ShowConfirm = false
 				}
 			}
 		}
@@ -263,7 +293,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// 2. Check Undo History Modal overlay input
-	if a.showUndoHistory {
+	if a.overlays.ShowUndoHistory {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			switch keyMsg.Type {
 			case tea.KeyUp:
@@ -271,21 +301,27 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.KeyDown:
 				a.undoHistoryView.MoveSelection(1)
 			case tea.KeyEsc:
-				a.showUndoHistory = false
+				a.overlays.ShowUndoHistory = false
 			case tea.KeyEnter:
-				a.showUndoHistory = false
+				a.overlays.ShowUndoHistory = false
 				idx := a.undoHistoryView.SelectedIndex()
 				cmds = append(cmds, func() tea.Msg {
-					for i := 0; i <= idx; i++ {
-						_ = a.buildMode.Session().UndoStack.UndoLast(context.Background(), a.registry)
+					sess := a.buildMode.Session()
+					if sess != nil && sess.UndoStack != nil {
+						for i := 0; i <= idx; i++ {
+							_ = sess.UndoStack.UndoLast(context.Background(), a.registry)
+						}
 					}
 					return nil
 				})
 			case tea.KeyRunes:
 				if keyMsg.String() == "u" || keyMsg.String() == "U" {
-					a.showUndoHistory = false
+					a.overlays.ShowUndoHistory = false
 					cmds = append(cmds, func() tea.Msg {
-						_ = a.buildMode.Session().UndoStack.UndoAll(context.Background(), a.registry)
+						sess := a.buildMode.Session()
+						if sess != nil && sess.UndoStack != nil {
+							_ = sess.UndoStack.UndoAll(context.Background(), a.registry)
+						}
 						return nil
 					})
 				}
@@ -295,14 +331,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// 3. Check Memory Fact Center overlay input
-	if a.showMemory && a.memoryView != nil {
+	if a.overlays.ShowMemory && a.memoryView != nil {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			cmd, shouldClose, shouldRefresh := a.memoryView.HandleKey(keyMsg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			if shouldClose {
-				a.showMemory = false
+				a.overlays.ShowMemory = false
 			}
 			if shouldRefresh {
 				// Refresh the TUI displays if a fact is updated
@@ -313,14 +349,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// 4. Check Prompt Templates Browser overlay input
-	if a.showTemplates && a.templatesView != nil {
+	if a.overlays.ShowTemplates && a.templatesView != nil {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			cmd, shouldClose, applyMsg := a.templatesView.HandleKey(keyMsg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			if shouldClose {
-				a.showTemplates = false
+				a.overlays.ShowTemplates = false
 			}
 			if applyMsg != nil {
 				// Dispatch the apply message back to our update loop
@@ -331,22 +367,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	// Help overlay input handling
+	if a.overlays.ShowHelp {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			if keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyCtrlH {
+				a.overlays.ShowHelp = false
+			}
+		}
+		return a, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		
+
+		layoutCfg := a.layout.Compute(a.activeView, msg.Width, msg.Height, a.isLoadingModel)
+		contentWidth := layoutCfg.ContentWidth
+
 		a.statusBar.SetWidth(msg.Width)
 		a.contextBar.SetWidth(msg.Width)
-		a.homeView.SetSize(msg.Width, msg.Height)
-		a.chatView.SetSize(msg.Width, msg.Height)
-		a.planChatView.SetSize(msg.Width, msg.Height)
-		a.planView.SetSize(msg.Width, msg.Height)
-		a.buildView.SetSize(msg.Width, msg.Height)
+		a.homeView.SetSize(contentWidth, msg.Height)
+		a.chatView.SetSize(contentWidth, msg.Height)
+		a.planChatView.SetSize(contentWidth, msg.Height)
+		a.planView.SetSize(contentWidth, msg.Height)
+		a.buildView.SetSize(contentWidth, msg.Height)
 		a.modelSelectView.SetSize(msg.Width, msg.Height)
 		a.metricsView.SetSize(msg.Width, msg.Height)
 		a.memoryView.SetSize(msg.Width, msg.Height)
 		a.templatesView.SetSize(msg.Width, msg.Height)
+		a.helpView.SetSize(msg.Width, msg.Height)
 
 		if a.confirmView != nil {
 			a.confirmView.SetSize(msg.Width, msg.Height)
@@ -406,6 +456,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if a.isLoadingModel {
 			break
+		}
+
+		if a.showAskUser {
+			if a.activeView == ViewBuild {
+				if msg.Type == tea.KeyEnter {
+					answer := a.buildView.TextInput().Value()
+					a.askUserMsg.ResponseChan <- answer
+					return a, nil
+				}
+				if msg.Type == tea.KeyCtrlC {
+					a.showAskUser = false
+					a.buildView.SetWaitingForUser(false)
+					a.askUserMsg.ResponseChan <- ""
+				}
+			}
+			cmd, _ := a.buildView.Update(msg, a.selectedModelID, "", "", "")
+			return a, cmd
 		}
 
 		switch msg.Type {
@@ -468,7 +535,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					list := session.UndoStack.List()
 					a.undoHistoryView = views.NewUndoHistoryView(list)
 					a.undoHistoryView.SetSize(a.width, a.height)
-					a.showUndoHistory = true
+					a.overlays.ShowUndoHistory = true
 				}
 			}
 
@@ -480,7 +547,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.activeView = ViewModelSelect
 			}
 
-		case tea.KeyCtrlI:
+		case tea.KeyCtrlG:
 			if a.activeView == ViewMetrics {
 				a.activeView = a.previousView
 			} else {
@@ -491,13 +558,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlE:
 			if a.memoryView != nil {
 				a.memoryView.Refresh()
-				a.showMemory = !a.showMemory
+				a.overlays.ShowMemory = !a.overlays.ShowMemory
 			}
 
 		case tea.KeyCtrlT:
 			if a.templatesView != nil {
 				a.templatesView.Refresh()
-				a.showTemplates = !a.showTemplates
+				a.overlays.ShowTemplates = !a.overlays.ShowTemplates
 			}
 
 		case tea.KeyCtrlL:
@@ -507,6 +574,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case ViewBuild:
 				a.buildView.Reset()
 			}
+
+		case tea.KeyCtrlH:
+			a.overlays.ShowHelp = !a.overlays.ShowHelp
+
+		case tea.KeyTab:
+			cmds = append(cmds, a.cycleModesCmd())
 		}
 
 	case views.ChannelReaderMsg:
@@ -538,7 +611,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/mem":
 			if a.memoryView != nil {
 				a.memoryView.Refresh()
-				a.showMemory = !a.showMemory
+				a.overlays.ShowMemory = !a.overlays.ShowMemory
 			}
 		case "/context":
 			// Open editor on context.md
@@ -560,15 +633,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return nil
 			}))
+		case "/t":
+			if a.templatesView != nil {
+				a.templatesView.Refresh()
+				a.overlays.ShowTemplates = !a.overlays.ShowTemplates
+			}
 		case "/help":
-			a.chatView.StatusLog = "Commands: /save [name], /load <id>, /clear, /mem, /context, /help"
+			a.chatView.StatusLog = "Commands: /save [name], /load <id>, /clear, /mem, /context, /t, /help"
 		default:
 			a.chatView.StatusLog = fmt.Sprintf("Unknown command: %s", msg.CmdType)
 		}
 		return a, tea.Batch(cmds...)
 
 	case views.TemplateApplyMsg:
-		a.showTemplates = false
+		a.overlays.ShowTemplates = false
 		tmpl := msg.Template
 		switch tmpl.Mode {
 		case "ask":
@@ -658,6 +736,38 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(cmds...)
 }
 
+func (a *App) cycleModesCmd() tea.Cmd {
+	var cmds []tea.Cmd
+	switch a.activeView {
+	case ViewChat:
+		a.activeView = ViewPlanChat
+		a.planChatView.Reset()
+		planModel := a.cfg.ModeModels.Plan
+		if planModel != "" && planModel != a.selectedModelID {
+			a.isLoadingModel = true
+			a.modelLoadStatus = fmt.Sprintf("Auto-switching to Plan mode model: %s...", planModel)
+			a.modelStatusChan = make(chan string, 10)
+			cmds = append(cmds, a.loadModelCmd(planModel, 8192))
+			cmds = append(cmds, a.readNextModelStatusCmd())
+		}
+	case ViewPlanChat, ViewPlan:
+		a.activeView = ViewBuild
+		a.buildView.Reset()
+		buildModel := a.cfg.ModeModels.Build
+		if buildModel != "" && buildModel != a.selectedModelID {
+			a.isLoadingModel = true
+			a.modelLoadStatus = fmt.Sprintf("Auto-switching to Build mode model: %s...", buildModel)
+			a.modelStatusChan = make(chan string, 10)
+			cmds = append(cmds, a.loadModelCmd(buildModel, 32768))
+			cmds = append(cmds, a.readNextModelStatusCmd())
+		}
+	default:
+		a.activeView = ViewChat
+		a.chatView.Reset()
+	}
+	return tea.Batch(cmds...)
+}
+
 func (a *App) loadModelCmd(key string, contextLength int) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -684,21 +794,7 @@ func (a *App) readNextModelStatusCmd() tea.Cmd {
 func (a *App) View() string {
 	theme := styles.DefaultTheme
 
-	// 1. Overlay Overrides
-	if a.showConfirm && a.confirmView != nil {
-		return a.confirmView.View()
-	}
-	if a.showUndoHistory && a.undoHistoryView != nil {
-		return a.undoHistoryView.View()
-	}
-	if a.showMemory && a.memoryView != nil {
-		return a.memoryView.View()
-	}
-	if a.showTemplates && a.templatesView != nil {
-		return a.templatesView.View()
-	}
-
-	// 2. Top Mode Tab Selector Header
+	// 1. Top Mode Tab Selector Header
 	tabs := []string{
 		" [Ctrl+A] ASK (Chat) ",
 		" [Ctrl+P] PLAN ",
@@ -722,21 +818,21 @@ func (a *App) View() string {
 			renderedTabs = append(renderedTabs, lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("#000000")).
-				Background(theme.SuccessColor).
+				Background(theme.AccentColor).
 				Render(tab))
 		} else {
 			renderedTabs = append(renderedTabs, lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#888888")).
-				Background(lipgloss.Color("#333333")).
+				Background(lipgloss.Color("#222222")).
 				Render(tab))
 		}
 	}
 
 	headerLine := lipgloss.JoinHorizontal(lipgloss.Left, renderedTabs...)
-	modelSelectHelp := theme.HelpStyle.Render("   [Ctrl+M] Models  |  [Ctrl+I] Metrics  |  [Ctrl+Q] Exit")
+	modelSelectHelp := theme.HelpStyle.Render("   [Ctrl+M] Models  |  [Ctrl+G] Metrics  |  [Ctrl+Q] Exit")
 	header := lipgloss.JoinHorizontal(lipgloss.Left, headerLine, modelSelectHelp)
 
-	// 3. Active Screen Content
+	// 2. Active Screen Content
 	var content string
 	if a.isLoadingModel {
 		content = lipgloss.JoinVertical(lipgloss.Center,
@@ -764,22 +860,25 @@ func (a *App) View() string {
 		}
 	}
 
+	// 3. Render Sidebar side-by-side if terminal is wide enough
+	layoutCfg := a.layout.Compute(a.activeView, a.width, a.height, a.isLoadingModel)
+	mainLayout := content
+	if layoutCfg.ShowSidebar {
+		sidebar := a.renderSidebar(layoutCfg.SidebarWidth-4, layoutCfg.SidebarHeight)
+		mainLayout = a.layout.JoinContentAndSidebar(content, sidebar, layoutCfg)
+	}
+
 	// 4. Context Bar (Visible in Chat and Build screens)
 	ctxBar := ""
 	if (a.activeView == ViewChat || a.activeView == ViewBuild) && a.cfg.UI.ShowContextBar {
 		m := a.modelManager.Metrics().Get()
-		
 		sysTokens := 400  // baseline estimate
-		
-		// Load actual project context and memory tokens
-		projectCtx, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
-		memFacts := ""
-		if a.memoryManager != nil {
-			memFacts = a.memoryManager.InjectFacts()
-		}
-		alloc := a.budgetManager.Allocate(projectCtx, memFacts, "")
 
-		histTokens := m.TokensUsed - sysTokens - alloc.ProjectTokens - alloc.MemoryTokens - alloc.RAGTokens
+		if a.cachedProjectCtx == "" || time.Since(a.lastCacheTime) > 5*time.Second {
+			a.updateCachedContext()
+		}
+
+		histTokens := m.TokensUsed - sysTokens - a.cachedAllocation.ProjectTokens - a.cachedAllocation.MemoryTokens - a.cachedAllocation.RAGTokens
 		if histTokens < 0 {
 			histTokens = 0
 		}
@@ -789,12 +888,12 @@ func (a *App) View() string {
 			m.ContextLimit,
 			sysTokens,
 			histTokens,
-			alloc.MemoryTokens,
-			alloc.RAGTokens,
+			a.cachedAllocation.MemoryTokens,
+			a.cachedAllocation.RAGTokens,
 		)
 	}
 
-	// 5. Status Bar (Always on bottom)
+	// 5. Status Bar & Keybindings Bar (Always on bottom)
 	m := a.modelManager.Metrics().Get()
 	activeModeStr := "home"
 	switch a.activeView {
@@ -820,6 +919,13 @@ func (a *App) View() string {
 	speed := a.chatView.CurrentSpeed
 	sBar := a.statusBar.Render(activeModeStr, loadedID, m.RAMUsedGB, speed, a.isOnline)
 
+	keybindingsBar := ""
+	if a.width > 0 {
+		keybindingsBar = theme.KeybindBarStyle.
+			Width(a.width).
+			Render("Tab Cycle  |  Ctrl+A Ask  |  Ctrl+P Plan  |  Ctrl+B Build  |  Ctrl+M Models  |  Ctrl+G Metrics  |  Ctrl+E Memory  |  Ctrl+T Templates  |  Ctrl+H Help  |  Ctrl+Q Exit")
+	}
+
 	// Combine components
 	var res string
 	if a.parseWarningMsg != "" {
@@ -837,30 +943,61 @@ func (a *App) View() string {
 			"\n",
 			banner,
 			"\n",
-			content,
+			mainLayout,
 		)
 	} else {
 		res = lipgloss.JoinVertical(lipgloss.Left,
 			header,
 			"\n",
-			content,
+			mainLayout,
 		)
 	}
 
 	// Make sure the screen layout fits window height nicely
-	remainingNewlines := a.height - lipgloss.Height(res) - lipgloss.Height(ctxBar) - lipgloss.Height(sBar) - 2
+	remainingNewlines := a.height - lipgloss.Height(res) - lipgloss.Height(ctxBar) - lipgloss.Height(sBar) - lipgloss.Height(keybindingsBar) - 2
 	paddingStr := ""
 	if remainingNewlines > 0 {
 		paddingStr = strings.Repeat("\n", remainingNewlines)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	bg := lipgloss.JoinVertical(lipgloss.Left,
 		res,
 		paddingStr,
+		keybindingsBar,
 		ctxBar,
 		"\n",
 		sBar,
 	)
+
+	// 6. Overlay Modals centered on top of dimmed background
+	var modal string
+	if a.overlays.ShowConfirm && a.confirmView != nil {
+		a.confirmView.SetSize(0, 0)
+		modal = a.confirmView.View()
+		a.confirmView.SetSize(a.width, a.height)
+	} else if a.overlays.ShowUndoHistory && a.undoHistoryView != nil {
+		a.undoHistoryView.SetSize(0, 0)
+		modal = a.undoHistoryView.View()
+		a.undoHistoryView.SetSize(a.width, a.height)
+	} else if a.overlays.ShowMemory && a.memoryView != nil {
+		a.memoryView.SetSize(0, 0)
+		modal = a.memoryView.View()
+		a.memoryView.SetSize(a.width, a.height)
+	} else if a.overlays.ShowTemplates && a.templatesView != nil {
+		a.templatesView.SetSize(0, 0)
+		modal = a.templatesView.View()
+		a.templatesView.SetSize(a.width, a.height)
+	} else if a.overlays.ShowHelp && a.helpView != nil {
+		a.helpView.SetSize(0, 0)
+		modal = a.helpView.View()
+		a.helpView.SetSize(a.width, a.height)
+	}
+
+	if modal != "" {
+		bg = a.overlays.RenderModal(bg, modal, a.width, a.height)
+	}
+
+	return bg
 }
 
 // SaveCurrentSession saves the active conversation history and context metadata to a local file.
@@ -899,7 +1036,14 @@ func (a *App) SaveCurrentSession(customName string) error {
 		})
 	}
 
-	dir := filepath.Join(a.projectRoot, ".lmhub", "sessions")
+	dir := a.cfg.Sessions.SaveDir
+	if dir == "" {
+		dir = filepath.Join(a.projectRoot, ".lmhub", "sessions")
+	} else if !filepath.IsAbs(dir) {
+		dir = filepath.Join(a.projectRoot, dir)
+	}
+	_ = os.MkdirAll(dir, 0755)
+
 	filename := fmt.Sprintf("%s-%s.json", a.currentSession.Mode, a.currentSession.ID)
 	if customName != "" {
 		if !strings.HasSuffix(customName, ".json") {
@@ -923,7 +1067,13 @@ func (a *App) SaveCurrentSession(customName string) error {
 
 // LoadSession loads a saved session from a file.
 func (a *App) LoadSession(nameOrID string) error {
-	dir := filepath.Join(a.projectRoot, ".lmhub", "sessions")
+	dir := a.cfg.Sessions.SaveDir
+	if dir == "" {
+		dir = filepath.Join(a.projectRoot, ".lmhub", "sessions")
+	} else if !filepath.IsAbs(dir) {
+		dir = filepath.Join(a.projectRoot, dir)
+	}
+
 	path := filepath.Join(dir, nameOrID)
 	if !strings.HasSuffix(path, ".json") {
 		path += ".json"
@@ -964,3 +1114,124 @@ func (a *App) LoadSession(nameOrID string) error {
 
 	return nil
 }
+
+func (a *App) renderSidebar(width, height int) string {
+	theme := styles.DefaultTheme
+
+	status := "● Offline"
+	statusStyle := lipgloss.NewStyle().Foreground(theme.DangerColor)
+	if a.isOnline {
+		status = "● Online"
+		statusStyle = lipgloss.NewStyle().Foreground(theme.SuccessColor)
+	}
+
+	modelStr := a.selectedModelID
+	if modelStr == "" {
+		modelStr = "None loaded"
+	} else {
+		// Truncate model name if too long
+		if len(modelStr) > width-12 {
+			modelStr = "..." + modelStr[len(modelStr)-(width-15):]
+		}
+	}
+
+	activeModeStr := "Home"
+	switch a.activeView {
+	case ViewChat:
+		activeModeStr = "Ask Mode"
+	case ViewPlanChat, ViewPlan:
+		activeModeStr = "Plan Mode"
+	case ViewBuild:
+		activeModeStr = "Build Mode"
+	case ViewModelSelect:
+		activeModeStr = "Model Selection"
+	case ViewMetrics:
+		activeModeStr = "Metrics Screen"
+	}
+
+	m := a.modelManager.Metrics().Get()
+	ramStr := fmt.Sprintf("%.2f GB", m.RAMUsedGB)
+	if m.RAMUsedGB == 0 {
+		ramStr = "N/A"
+	}
+
+	sidebarContent := lipgloss.JoinVertical(lipgloss.Left,
+		theme.PanelHeaderStyle.Render("SYSTEM STATUS"),
+		"Status: "+statusStyle.Render(status),
+		"Model:  "+lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Render(modelStr),
+		"Mode:   "+lipgloss.NewStyle().Foreground(theme.AccentColor).Render(activeModeStr),
+		"RAM:    "+ramStr,
+		"\n"+theme.SubtitleStyle.Render("───────────────"),
+		theme.PanelHeaderStyle.Render("RECENT ACTIVITY"),
+	)
+
+	activityLines := []string{}
+	if a.buildMode != nil && a.buildMode.Session() != nil {
+		sess := a.buildMode.Session()
+		if sess.PlanRef != nil && sess.CurrentStep >= 0 && sess.CurrentStep < len(sess.PlanRef.Steps) {
+			step := sess.PlanRef.Steps[sess.CurrentStep]
+			stepTitle := step.Description
+			if len(stepTitle) > width-8 {
+				stepTitle = stepTitle[:width-11] + "..."
+			}
+			activityLines = append(activityLines, lipgloss.NewStyle().Foreground(theme.AccentColor).Render(fmt.Sprintf("➜ Step %d/%d", sess.CurrentStep+1, len(sess.PlanRef.Steps))))
+			activityLines = append(activityLines, "  "+stepTitle)
+		} else {
+			activityLines = append(activityLines, "➜ Running task...")
+		}
+
+		// Tool calls history
+		history := sess.ToolCallHistory
+		if len(history) > 0 {
+			activityLines = append(activityLines, "")
+			startIdx := len(history) - 3
+			if startIdx < 0 {
+				startIdx = 0
+			}
+			for i := startIdx; i < len(history); i++ {
+				call := history[i]
+				name := call.ToolName
+				if len(name) > width-6 {
+					name = name[:width-9] + "..."
+				}
+				activityLines = append(activityLines, fmt.Sprintf("  ✔ %s", name))
+			}
+		}
+	} else if a.chatView != nil && a.chatView.StatusLog != "" {
+		logText := a.chatView.StatusLog
+		if len(logText) > width-6 {
+			logText = logText[:width-9] + "..."
+		}
+		activityLines = append(activityLines, "💬 "+logText)
+	} else {
+		activityLines = append(activityLines, "Ready.")
+	}
+
+	activityStr := lipgloss.JoinVertical(lipgloss.Left, activityLines...)
+	sidebarContent = lipgloss.JoinVertical(lipgloss.Left, sidebarContent, activityStr)
+
+	// Wrap in a box with theme.BorderColor
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(theme.BorderColor).
+		Width(width).
+		Height(height).
+		Padding(1).
+		Render(sidebarContent)
+}
+
+
+func (a *App) updateCachedContext() {
+	projectCtx, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
+	memFacts := ""
+	if a.memoryManager != nil {
+		memFacts = a.memoryManager.InjectFacts()
+	}
+	alloc := a.budgetManager.Allocate(projectCtx, memFacts, "")
+
+	a.cachedProjectCtx = projectCtx
+	a.cachedMemoryFacts = memFacts
+	a.cachedAllocation = alloc
+	a.lastCacheTime = time.Now()
+}
+

@@ -44,8 +44,14 @@ type BuildView struct {
 	stream      chan build.AgentStepMsg
 	StatusLog   string
 
+	// Cancellation function for the active build task
+	cancel context.CancelFunc
+
 	// Current streaming content
 	accumulatedThoughts strings.Builder
+
+	// Indicates whether we are waiting for user input to answer a tool question
+	isWaitingForUser bool
 }
 
 // NewBuildView creates a new BuildView view.
@@ -89,6 +95,27 @@ func (bv *BuildView) SetSize(w, h int) {
 	bv.diffView.SetSize(rightWidth, h - 10)
 }
 
+// TextInput returns the underlying text input model.
+func (bv *BuildView) TextInput() *textinput.Model {
+	return &bv.textInput
+}
+
+// SetWaitingForUser toggles the user input query state.
+func (bv *BuildView) SetWaitingForUser(waiting bool) {
+	bv.isWaitingForUser = waiting
+	if waiting {
+		bv.textInput.Prompt = " answer > "
+		bv.textInput.Placeholder = "Type your answer here..."
+		bv.textInput.SetValue("")
+		bv.textInput.Focus()
+	} else {
+		bv.textInput.Prompt = " build > "
+		bv.textInput.Placeholder = "Enter a task description (e.g. 'implement test router') and press Enter..."
+		bv.textInput.SetValue("")
+		bv.textInput.Focus()
+	}
+}
+
 // SetInputValue updates the text input value.
 func (bv *BuildView) SetInputValue(val string) {
 	bv.textInput.SetValue(val)
@@ -124,10 +151,13 @@ func (bv *BuildView) Update(msg tea.Msg, modelID string, gitStatus, projectConte
 			break
 		}
 
-		if bv.isStreaming {
+		if bv.isStreaming && !bv.isWaitingForUser {
 			if msg.Type == tea.KeyCtrlC {
 				bv.isStreaming = false
 				bv.StatusLog = "Build session interrupted."
+				if bv.cancel != nil {
+					bv.cancel()
+				}
 			}
 			break
 		}
@@ -188,8 +218,11 @@ func (bv *BuildView) startBuildTaskCmd(modelID, task, gitStatus, projectContext,
 			ch <- msg
 		})
 
-		// Temperature: 0.5, MaxTokens: 8192 for build mode
-		bv.buildMode.ExecuteTask(context.Background(), modelID, task, projectContext, memoryFacts, gitStatus, 0.5, 8192)
+		ctx, cancel := context.WithCancel(context.Background())
+		bv.cancel = cancel
+
+		// Temperature and MaxTokens resolved dynamically from config overrides
+		bv.buildMode.ExecuteTask(ctx, modelID, task, projectContext, memoryFacts, gitStatus, 0.0, 0)
 
 		return BuildChannelReaderMsg{Stream: ch}
 	}

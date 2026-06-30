@@ -84,12 +84,7 @@ func (uv *UndoHistoryView) View() string {
 		boxWidth = uv.width - 10
 	}
 
-	modal := lipgloss.NewStyle().
-		Border(lipgloss.DoubleBorder()).
-		BorderForeground(theme.PrimaryColor).
-		Padding(1, 2).
-		Width(boxWidth).
-		Render(sb.String())
+	modal := theme.FloatingModalStyle.Width(boxWidth).Render(sb.String())
 
 	if uv.width > 0 && uv.height > 0 {
 		return lipgloss.Place(uv.width, uv.height, lipgloss.Center, lipgloss.Center, modal)

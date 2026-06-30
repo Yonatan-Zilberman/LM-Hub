@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pmezard/go-difflib/difflib"
@@ -32,6 +33,7 @@ type AgentStepMsg struct {
 
 // BuildMode runs the autonomous ReAct agent execution loop with tool access.
 type BuildMode struct {
+	mu                 sync.RWMutex
 	client             *api.Client
 	modelManager       *modelmanager.Manager
 	contextManager     *agent.ContextManager
@@ -46,6 +48,7 @@ type BuildMode struct {
 	consecutiveErrors  int
 	confirmCallback    func(msg safety.ConfirmMsg) bool
 	updateCallback     func(msg AgentStepMsg)
+	askUserCallback    func(question string) (string, error)
 }
 
 // NewBuildMode creates a new BuildMode execution handler.
@@ -87,26 +90,95 @@ func (bm *BuildMode) SetUpdateCallback(cb func(msg AgentStepMsg)) {
 	bm.updateCallback = cb
 }
 
+// SetAskUserCallback sets the ask user input query callback.
+func (bm *BuildMode) SetAskUserCallback(cb func(question string) (string, error)) {
+	bm.askUserCallback = cb
+}
+
 // Reset clears session logs and history.
 func (bm *BuildMode) Reset() {
+	bm.mu.Lock()
 	bm.history = make([]api.Message, 0)
+	bm.mu.Unlock()
 	bm.session = nil
 	bm.consecutiveErrors = 0
 }
 
-// History returns the conversation history.
+// History returns a copy of the conversation history.
 func (bm *BuildMode) History() []api.Message {
-	return bm.history
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	hist := make([]api.Message, len(bm.history))
+	copy(hist, bm.history)
+	return hist
 }
 
 // SetHistory replaces the current conversation history.
 func (bm *BuildMode) SetHistory(hist []api.Message) {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
 	bm.history = hist
 }
 
 // Session returns the active build session.
 func (bm *BuildMode) Session() *BuildSession {
 	return bm.session
+}
+
+func (bm *BuildMode) summarizeHistory(ctx context.Context, modelID string) error {
+	bm.updateCallback(AgentStepMsg{
+		StepType: "thought",
+		Content:  "Context window is 90% full. Compressing history...",
+	})
+
+	bm.mu.Lock()
+	messages := make([]api.Message, len(bm.history))
+	copy(messages, bm.history)
+	bm.mu.Unlock()
+
+	messages = append(messages, api.Message{
+		Role:    "user",
+		Content: "Summarize the key progress, files modified, shell commands run, and current state from the conversation history above. Keep it concise, under 300 words.",
+	})
+
+	req := api.ChatRequest{
+		Model:       modelID,
+		Messages:    messages,
+		Temperature: 0.3,
+		MaxTokens:   500,
+	}
+
+	resp, err := bm.client.ChatCompletion(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to generate context summary: %w", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		return fmt.Errorf("no summary returned")
+	}
+
+	summary := resp.Choices[0].Message.Content
+
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	var trailing []api.Message
+	if len(bm.history) > 2 {
+		trailing = bm.history[len(bm.history)-2:]
+	} else {
+		trailing = bm.history
+	}
+
+	newHistory := []api.Message{
+		{
+			Role:    "system",
+			Content: fmt.Sprintf("Summary of previous conversation history:\n%s", summary),
+		},
+	}
+	newHistory = append(newHistory, trailing...)
+
+	bm.history = newHistory
+	return nil
 }
 
 // SetSession updates the active session.
@@ -151,7 +223,9 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 		}
 
 		// First step: add the user task if history is empty
-		if len(bm.history) == 0 {
+		bm.mu.Lock()
+		histEmpty := len(bm.history) == 0
+		if histEmpty {
 			if bm.session.PlanRef != nil {
 				bm.session.SetCurrentStep(0)
 				step := bm.session.PlanRef.Steps[0]
@@ -166,8 +240,21 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 				})
 			}
 		}
+		bm.mu.Unlock()
 
 		for {
+			// Check if context is cancelled
+			select {
+			case <-ctx.Done():
+				bm.updateCallback(AgentStepMsg{
+					StepType: "finished",
+					Content:  "Task cancelled by user.",
+					Done:     true,
+				})
+				return
+			default:
+			}
+
 			// Check iteration limit
 			iter := bm.session.GetIteration()
 			if iter >= bm.session.MaxIterations {
@@ -186,12 +273,7 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 						Description:  fmt.Sprintf("Agent reached maximum iterations ceiling (%d). Allow 10 more iterations?", bm.session.MaxIterations),
 						ResponseChan: ch,
 					}
-					// Invoke confirm view
-					go func() {
-						ch <- bm.confirmCallback(confirmMsg)
-					}()
-
-					approved := <-ch
+					approved := bm.confirmCallback(confirmMsg)
 					if approved {
 						bm.session.MaxIterations += 10
 					} else {
@@ -233,6 +315,7 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 				limit = 32768 // Safe default
 			}
 
+			bm.mu.Lock()
 			ctxResult := bm.contextManager.ManageContext(
 				bm.history,
 				systemPrompt,
@@ -243,6 +326,7 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 			)
 
 			if ctxResult.Action == agent.ContextHardStop {
+				bm.mu.Unlock()
 				bm.updateCallback(AgentStepMsg{
 					StepType: "error",
 					Content:  fmt.Sprintf("Context limit reached (hard-stop): %s", ctxResult.Log),
@@ -251,7 +335,28 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 				return
 			}
 
-			if ctxResult.Action == agent.ContextTrimmed {
+			if ctxResult.Action == agent.ContextNeedsSummarize {
+				bm.mu.Unlock()
+				err := bm.summarizeHistory(ctx, modelID)
+				bm.mu.Lock()
+				if err != nil {
+					bm.updateCallback(AgentStepMsg{
+						StepType: "thought",
+						Content:  fmt.Sprintf("Summarization failed: %v. Trimming instead.", err),
+					})
+					trimRes := bm.contextManager.ManageContext(
+						bm.history,
+						systemPrompt,
+						limit,
+						bm.cfg.Agent.ContextWarnPct,
+						bm.cfg.Agent.ContextTrimPct,
+						0, // Disable summarization check to force fallback to trim/ok
+					)
+					if trimRes.Action == agent.ContextTrimmed {
+						bm.history = trimRes.Messages
+					}
+				}
+			} else if ctxResult.Action == agent.ContextTrimmed {
 				bm.history = ctxResult.Messages
 			}
 
@@ -263,12 +368,35 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 				},
 			}
 			reqMessages = append(reqMessages, bm.history...)
+			bm.mu.Unlock()
+
+			resolvedTemp := temp
+			if resolvedTemp == 0 {
+				resolvedTemp = bm.cfg.ModeInference.Build.Temperature
+			}
+			if resolvedTemp == 0 {
+				resolvedTemp = bm.cfg.Inference.Temperature
+			}
+			if resolvedTemp == 0 {
+				resolvedTemp = 0.5
+			}
+
+			resolvedMaxToks := maxToks
+			if resolvedMaxToks == 0 {
+				resolvedMaxToks = bm.cfg.ModeInference.Build.MaxTokens
+			}
+			if resolvedMaxToks == 0 {
+				resolvedMaxToks = bm.cfg.Inference.MaxTokens
+			}
+			if resolvedMaxToks == 0 {
+				resolvedMaxToks = 8192
+			}
 
 			req := api.ChatRequest{
 				Model:       modelID,
 				Messages:    reqMessages,
-				Temperature: temp,
-				MaxTokens:   maxToks,
+				Temperature: resolvedTemp,
+				MaxTokens:   resolvedMaxToks,
 				TopP:        0.95,
 			}
 
@@ -308,7 +436,9 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 				}
 				if chunk.Done {
 					// Update local context window metrics
+					bm.mu.Lock()
 					totalLen := bm.contextManager.CountMessagesTokens(bm.history) + bm.contextManager.CountTokens(systemPrompt)
+					bm.mu.Unlock()
 					bm.modelManager.Metrics().UpdateTelemetry(modelID, limit, totalLen, metrics.RAMUsedGB)
 				}
 			}
@@ -329,6 +459,7 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 				}
 
 				// Feed parser failure feedback back as assistant turn + user observation
+				bm.mu.Lock()
 				bm.history = append(bm.history, api.Message{
 					Role:    "assistant",
 					Content: fullResponse,
@@ -339,6 +470,7 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 					Role:    "user",
 					Content: feedback,
 				})
+				bm.mu.Unlock()
 
 				bm.session.IncrementIteration()
 				continue
@@ -348,10 +480,12 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 
 			// Handle end of task (if no tool calls are requested, agent is done)
 			if len(tcs) == 0 {
+				bm.mu.Lock()
 				bm.history = append(bm.history, api.Message{
 					Role:    "assistant",
 					Content: fullResponse,
 				})
+				bm.mu.Unlock()
 
 				if bm.session.PlanRef != nil {
 					currentIdx := bm.session.GetCurrentStep()
@@ -372,11 +506,7 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 								Description:  fmt.Sprintf("Proceed to next step: %s?", nextStep.Description),
 								ResponseChan: ch,
 							}
-							go func() {
-								ch <- bm.confirmCallback(confirmMsg)
-							}()
-
-							approved := <-ch
+							approved := bm.confirmCallback(confirmMsg)
 							if !approved {
 								bm.updateCallback(AgentStepMsg{
 									StepType: "finished",
@@ -388,17 +518,23 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 						}
 
 						bm.session.SetCurrentStep(nextIdx)
+						bm.mu.Lock()
 						bm.history = append(bm.history, api.Message{
 							Role:    "user",
 							Content: fmt.Sprintf("Step %d completed. Now proceed to Step %d:\nDescription: %s\nTarget: %s", currentIdx+1, nextIdx+1, nextStep.Description, nextStep.Target),
 						})
+						bm.mu.Unlock()
 						bm.session.IncrementIteration()
 						continue
 					}
 				}
 
 				if bm.memoryManager != nil {
-					_ = bm.memoryManager.ExtractAndStore(ctx, modelID, bm.history)
+					bm.mu.RLock()
+					histCopy := make([]api.Message, len(bm.history))
+					copy(histCopy, bm.history)
+					bm.mu.RUnlock()
+					_ = bm.memoryManager.ExtractAndStore(ctx, modelID, histCopy)
 				}
 				bm.updateCallback(AgentStepMsg{
 					StepType: "finished",
@@ -410,17 +546,21 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 
 			// Execute the first tool call returned
 			tc := tcs[0]
+			bm.mu.Lock()
 			bm.history = append(bm.history, api.Message{
 				Role:      "assistant",
 				Content:   fullResponse,
 				ToolCalls: nativeCalls, // Attach if native
 			})
+			bm.mu.Unlock()
 
 			// Retrieve tool instance
 			toolInstance, exists := bm.registry.Get(tc.Name)
 			if !exists {
 				obs := fmt.Sprintf("Tool not found: %s", tc.Name)
+				bm.mu.Lock()
 				bm.history = append(bm.history, api.Message{Role: "user", Content: obs})
+				bm.mu.Unlock()
 				bm.session.IncrementIteration()
 				continue
 			}
@@ -428,7 +568,9 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 			// Validate parameters
 			if err := bm.registry.ValidateArgs(toolInstance, tc.Args); err != nil {
 				obs := fmt.Sprintf("Parameter validation error: %v", err)
+				bm.mu.Lock()
 				bm.history = append(bm.history, api.Message{Role: "user", Content: obs})
+				bm.mu.Unlock()
 				bm.session.IncrementIteration()
 				continue
 			}
@@ -486,17 +628,14 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 					ResponseChan: ch,
 				}
 
-				// Query confirmation view
-				go func() {
-					ch <- bm.confirmCallback(confirmMsg)
-				}()
-
-				approved := <-ch
+				approved := bm.confirmCallback(confirmMsg)
 				if !approved {
+					bm.mu.Lock()
 					bm.history = append(bm.history, api.Message{
 						Role:    "user",
 						Content: "Observation: Execution rejected by user.",
 					})
+					bm.mu.Unlock()
 					bm.session.IncrementIteration()
 					bm.updateCallback(AgentStepMsg{
 						StepType:  "tool_result",
@@ -588,10 +727,12 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 			})
 
 			// Add result observation to conversation history
+			bm.mu.Lock()
 			bm.history = append(bm.history, api.Message{
 				Role:    "user",
 				Content: fmt.Sprintf("Observation: %s", resultString),
 			})
+			bm.mu.Unlock()
 
 			bm.session.IncrementIteration()
 		}

@@ -34,6 +34,8 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("inference.top_p", defaultCfg.Inference.TopP)
 	v.SetDefault("inference.repeat_penalty", defaultCfg.Inference.RepeatPenalty)
 
+	v.SetDefault("mode_inference.ask.temperature", defaultCfg.ModeInference.Ask.Temperature)
+	v.SetDefault("mode_inference.ask.max_tokens", defaultCfg.ModeInference.Ask.MaxTokens)
 	v.SetDefault("mode_inference.plan.temperature", defaultCfg.ModeInference.Plan.Temperature)
 	v.SetDefault("mode_inference.plan.max_tokens", defaultCfg.ModeInference.Plan.MaxTokens)
 	v.SetDefault("mode_inference.build.temperature", defaultCfg.ModeInference.Build.Temperature)
@@ -215,6 +217,9 @@ inference:
   repeat_penalty: 1.1
 
 mode_inference:
+  ask:
+    temperature: 0.7
+    max_tokens: 8192
   plan:
     temperature: 0.3
     max_tokens: 4096

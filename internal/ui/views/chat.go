@@ -50,6 +50,9 @@ type ChatView struct {
 
 	// Log warnings/trim messages
 	StatusLog string
+
+	// Cancellation function for the active stream
+	cancel context.CancelFunc
 }
 
 // NewChatView creates a new ChatView instance.
@@ -123,8 +126,10 @@ func (cv *ChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 		if cv.isStreaming {
 			// Ignore typing while streaming, but allow standard navigation/quit keys
 			if msg.Type == tea.KeyCtrlC {
-				// We don't cancel instantly, but could set isStreaming = false
 				cv.isStreaming = false
+				if cv.cancel != nil {
+					cv.cancel()
+				}
 			}
 			break
 		}
@@ -198,7 +203,8 @@ func (cv *ChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 
 func (cv *ChatView) startChatStreamCmd(modelID, text string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
+		cv.cancel = cancel
 		
 		// Setup call options
 		// Default temperature 0.7, max tokens 8192
@@ -206,7 +212,7 @@ func (cv *ChatView) startChatStreamCmd(modelID, text string) tea.Cmd {
 		if cv.memManager != nil {
 			memoryFacts = cv.memManager.InjectFacts()
 		}
-		stream, logMsg, err := cv.askMode.SendUserMessage(ctx, modelID, text, ".", "macOS", "zsh", "", memoryFacts, 0.7, 8192)
+		stream, logMsg, err := cv.askMode.SendUserMessage(ctx, modelID, text, ".", "macOS", "zsh", "", memoryFacts, 0.0, 0)
 		if err != nil {
 			return ChatErrorMsg{Err: err}
 		}

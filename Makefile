@@ -1,12 +1,12 @@
 .PHONY: build build-treesitter run test test-treesitter lint clean install release
 
-BINARY_NAME=lmhub
+BINARY_NAME=lmh
 
 build:
-	go build -o $(BINARY_NAME) ./cmd/lmhub
+	go build -o $(BINARY_NAME) ./cmd/lmh
 
 build-treesitter:
-	go build -tags treesitter -o $(BINARY_NAME) ./cmd/lmhub
+	go build -tags treesitter -o $(BINARY_NAME) ./cmd/lmh
 
 run: build
 	./$(BINARY_NAME)
@@ -25,7 +25,8 @@ clean:
 	go clean
 
 install:
-	go install ./cmd/lmhub
+	go install ./cmd/lmh
+	ln -sf $(shell go env GOPATH)/bin/lmh $(shell go env GOPATH)/bin/lmhub
 
 release:
 	goreleaser release --snapshot --clean

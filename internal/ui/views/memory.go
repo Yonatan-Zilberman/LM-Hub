@@ -174,7 +174,11 @@ func (mv *MemoryView) View() string {
 
 	sb.WriteString(theme.SubtitleStyle.Render("Project Facts"))
 	sb.WriteString("\n")
-	sb.WriteString(strings.Repeat("─", mv.width-12))
+	divWidth := mv.width
+	if divWidth <= 12 {
+		divWidth = 60
+	}
+	sb.WriteString(strings.Repeat("─", divWidth-12))
 	sb.WriteString("\n")
 	if len(projectFacts) == 0 {
 		sb.WriteString("  No project-specific facts recorded yet.\n")
@@ -195,7 +199,11 @@ func (mv *MemoryView) View() string {
 
 	sb.WriteString(theme.SubtitleStyle.Render("Global Facts"))
 	sb.WriteString("\n")
-	sb.WriteString(strings.Repeat("─", mv.width-12))
+	divWidth2 := mv.width
+	if divWidth2 <= 12 {
+		divWidth2 = 60
+	}
+	sb.WriteString(strings.Repeat("─", divWidth2-12))
 	sb.WriteString("\n")
 	if len(globalFacts) == 0 {
 		sb.WriteString("  No global facts recorded yet.\n")
@@ -227,12 +235,7 @@ func (mv *MemoryView) View() string {
 		boxWidth = mv.width - 10
 	}
 
-	modal := lipgloss.NewStyle().
-		Border(lipgloss.DoubleBorder()).
-		BorderForeground(theme.PrimaryColor).
-		Padding(1, 2).
-		Width(boxWidth).
-		Render(sb.String())
+	modal := theme.FloatingModalStyle.Width(boxWidth).Render(sb.String())
 
 	if mv.width > 0 && mv.height > 0 {
 		return lipgloss.Place(mv.width, mv.height, lipgloss.Center, lipgloss.Center, modal)

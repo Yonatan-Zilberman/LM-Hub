@@ -8,7 +8,7 @@ import (
 	"github.com/yonatanzilberman/lmhub/internal/ui/styles"
 )
 
-// MetricsView displays the Ctrl+I Inference Metrics overlay panel.
+// MetricsView displays the Ctrl+G Inference Metrics overlay panel.
 type MetricsView struct {
 	metrics *modelmanager.Metrics
 	width   int
@@ -36,7 +36,7 @@ func (mv *MetricsView) View() string {
 	var sb strings.Builder
 	sb.WriteString(theme.TitleStyle.Render("📊 Inference Metrics"))
 	sb.WriteString("\n")
-	sb.WriteString(theme.HelpStyle.Render("Press [Ctrl+I] to close"))
+	sb.WriteString(theme.HelpStyle.Render("Press [Ctrl+G] to close"))
 	sb.WriteString("\n\n")
 
 	if m.ModelID == "" {
@@ -58,7 +58,11 @@ func (mv *MetricsView) View() string {
 	sb.WriteString("\n")
 
 	sb.WriteString(theme.SubtitleStyle.Render("Last Chat Stream Completion\n"))
-	sb.WriteString(strings.Repeat("─", mv.width-12))
+	divWidth := mv.width
+	if divWidth <= 12 {
+		divWidth = 60
+	}
+	sb.WriteString(strings.Repeat("─", divWidth-12))
 	sb.WriteString("\n")
 	completionInfo := fmt.Sprintf(
 		"Time to first token (TTFT): %d ms\n"+
@@ -71,7 +75,11 @@ func (mv *MetricsView) View() string {
 	sb.WriteString("\n")
 
 	sb.WriteString(theme.SubtitleStyle.Render("Context Window Allocation\n"))
-	sb.WriteString(strings.Repeat("─", mv.width-12))
+	divWidth2 := mv.width
+	if divWidth2 <= 12 {
+		divWidth2 = 60
+	}
+	sb.WriteString(strings.Repeat("─", divWidth2-12))
 	sb.WriteString("\n")
 	
 	pct := 0.0

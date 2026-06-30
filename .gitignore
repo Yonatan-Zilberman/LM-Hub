@@ -10,3 +10,4 @@ lmhub
 # User-specific configuration overrides (if copied locally)
 config.yaml
 /pkg/platform/local_*
+lmh

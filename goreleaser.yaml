@@ -6,8 +6,23 @@ before:
     - go mod tidy
 
 builds:
+  - id: lmh
+    main: ./cmd/lmh
+    binary: lmh
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
   - id: lmhub
-    entry: ./cmd/lmhub
+    main: ./cmd/lmh
     binary: lmhub
     goos:
       - darwin
@@ -20,6 +35,11 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+release:
+  github:
+    owner: Yonatan-Zilberman
+    name: LM-Hub
 
 archives:
   - format: tar.gz

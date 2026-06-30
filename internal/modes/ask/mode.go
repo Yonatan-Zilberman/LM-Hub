@@ -102,6 +102,23 @@ func (am *AskMode) SendUserMessage(ctx context.Context, modelID string, text str
 		am.history = result.Messages
 	}
 
+	if result.Action == agent.ContextNeedsSummarize {
+		if err := am.summarizeHistory(ctx, modelID); err != nil {
+			trimRes := am.contextManager.ManageContext(
+				am.history,
+				am.systemPrompt,
+				limit,
+				am.cfg.Agent.ContextWarnPct,
+				am.cfg.Agent.ContextTrimPct,
+				0,
+			)
+			if trimRes.Action == agent.ContextTrimmed {
+				am.history = trimRes.Messages
+			}
+			result.Log = fmt.Sprintf("%s Summarization failed (%v); trimmed instead.", result.Log, err)
+		}
+	}
+
 	// Prepare payload messages (inject system prompt at the beginning)
 	reqMessages := []api.Message{
 		{
@@ -111,12 +128,34 @@ func (am *AskMode) SendUserMessage(ctx context.Context, modelID string, text str
 	}
 	reqMessages = append(reqMessages, am.history...)
 
+	resolvedTemp := temp
+	if resolvedTemp == 0 {
+		resolvedTemp = am.cfg.ModeInference.Ask.Temperature
+	}
+	if resolvedTemp == 0 {
+		resolvedTemp = am.cfg.Inference.Temperature
+	}
+	if resolvedTemp == 0 {
+		resolvedTemp = 0.7
+	}
+
+	resolvedMaxToks := maxToks
+	if resolvedMaxToks == 0 {
+		resolvedMaxToks = am.cfg.ModeInference.Ask.MaxTokens
+	}
+	if resolvedMaxToks == 0 {
+		resolvedMaxToks = am.cfg.Inference.MaxTokens
+	}
+	if resolvedMaxToks == 0 {
+		resolvedMaxToks = 8192
+	}
+
 	// Create request
 	req := api.ChatRequest{
 		Model:       modelID,
 		Messages:    reqMessages,
-		Temperature: temp,
-		MaxTokens:   maxToks,
+		Temperature: resolvedTemp,
+		MaxTokens:   resolvedMaxToks,
 		TopP:        0.95,
 	}
 
@@ -160,5 +199,49 @@ func (am *AskMode) SendUserMessage(ctx context.Context, modelID string, text str
 	}()
 
 	return outChan, result.Log, nil
+}
+
+func (am *AskMode) summarizeHistory(ctx context.Context, modelID string) error {
+	messages := make([]api.Message, len(am.history))
+	copy(messages, am.history)
+
+	messages = append(messages, api.Message{
+		Role:    "user",
+		Content: "Summarize the key points, decisions, and open questions from the conversation history above. Keep it concise, under 300 words.",
+	})
+
+	req := api.ChatRequest{
+		Model:       modelID,
+		Messages:    messages,
+		Temperature: 0.3,
+		MaxTokens:   500,
+	}
+
+	resp, err := am.client.ChatCompletion(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to generate context summary: %w", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		return fmt.Errorf("no summary returned")
+	}
+
+	summary := resp.Choices[0].Message.Content
+
+	var trailing []api.Message
+	if len(am.history) > 2 {
+		trailing = am.history[len(am.history)-2:]
+	} else {
+		trailing = am.history
+	}
+
+	newHistory := []api.Message{
+		{
+			Role:    "system",
+			Content: fmt.Sprintf("Summary of previous conversation history:\n%s", summary),
+		},
+	}
+	am.history = append(newHistory, trailing...)
+	return nil
 }
 

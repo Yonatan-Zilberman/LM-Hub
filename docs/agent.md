@@ -33,20 +33,31 @@ Any AI coding agent working on the LM Hub codebase **MUST** strictly adhere to t
 
 ## Current Status
 
-- **Current Phase**: Phase 7 — Polish & Platform (Complete)
-- **Milestone**: Multi-platform support, robust session persistence, full Cobra CLI commands suite, first-run wizard setup, and optional build tags.
-- **Status**: Completed Phase 7 implementation. Added robust session save/load persistence in TUI (Ctrl+S, /save, /load) with budget telemetry snapshotting; refactored CLI entry points to support Cobra commands (`ask`, `plan`, `build`, `memory`, `index`, `config`, `sessions`, `init`); implemented first-run auto-probing setup wizard; structured platform files for Linux and Windows stubs; added build-tag gated (`treesitter`) CGO AST chunking option. All unit tests pass cleanly.
+- **Current Phase**: Phase 8 — Production Polish (Complete)
+- **Milestone**: `lmh` CLI rename, TUI redesign, distribution pipeline, bug fixes, and documentation sync.
+- **Status**: All Phase 8 deliverables complete. Build and tests pass. Changes are uncommitted pending user review.
 
 ---
 
 ## Progress Log
 
+### 2026-07-01 (Phase 8 Production Polish)
+- Renamed primary CLI binary and entry point from `lmhub` to `lmh` (`cmd/lmh/`).
+- Fixed plan-mode streaming cancellation, SSE read busy-loop, ask-mode context summarization, and plan retry inference params.
+- Added `mode_inference.ask` config schema field.
+- Fixed `goreleaser.yaml` (`main` key, dual `lmh`/`lmhub` binaries), rewrote `install.sh` for GitHub Releases with `--source` fallback.
+- Extracted `internal/ui/layout.go` (LayoutManager) and `internal/ui/overlay.go` (OverlayManager).
+- Added theme style tokens: `PanelHeaderStyle`, `KeybindBarStyle`, `DimmedOverlayStyle`, `FloatingModalStyle`.
+- Split `cmd/lmh/commands.go` into per-command files (`cmd_ask.go`, `cmd_plan.go`, etc.).
+- Revamped README with Features, Quick Start, Contributing, and License sections.
+- TUI now unloads all LM Studio models automatically on exit via `modelmanager.UnloadAll`.
+
 ### 2026-06-18 (Phase 7 Polish & Platform Complete)
 - Implemented TUI session persistence with JSON file saving/loading in `internal/session/session.go` and directory listing/cleanup in `internal/session/history.go`.
 - Structured and wired session save, load, and auto-save hotkeys/slash commands (`/save`, `/load`, `Ctrl+S`, auto-save on `Ctrl+Q`) in `internal/ui/app.go` and `internal/ui/views/chat.go`.
-- Restructured all application subcommands (`ask`, `plan`, `build`, `memory`, `index`, `config`, `sessions`, `init`) using Cobra CLI library in `cmd/lmhub/cli.go` and `cmd/lmhub/commands.go`.
+- Restructured all application subcommands (`ask`, `plan`, `build`, `memory`, `index`, `config`, `sessions`, `init`) using Cobra CLI library in `cmd/lmh/cli.go` and `cmd/lmh/tui.go`.
 - Added headless/non-interactive ask, plan, and build execution modes to the CLI.
-- Extracted and implemented setup wizard in `cmd/lmhub/commands.go` that runs on first startup to initialize `config.yaml`.
+- Extracted and implemented setup wizard in `cmd/lmh/tui.go` that runs on first startup to initialize `config.yaml`.
 - Created platform support files for Linux (`pkg/platform/linux.go`) and Windows (`pkg/platform/windows.go`), and updated command execution in `internal/tools/shell.go` to be platform-independent.
 - Implemented CGO-gated (`//go:build treesitter`) AST-based chunking option in `internal/rag/chunker_treesitter.go` with sliding window fallbacks.
 - Created `goreleaser.yaml` config, updated `Makefile` build targets, and expanded `README.md` into a detailed quick-start manual.
@@ -58,7 +69,7 @@ Any AI coding agent working on the LM Hub codebase **MUST** strictly adhere to t
 - Implemented interactive Memory Fact Center view overlay (`Ctrl+E`) in `internal/ui/views/memory.go`.
 - Implemented prompt template browser overlay (`Ctrl+T`) in `internal/ui/views/templates.go` with 20 general-based templates.
 - Configured template fuzzy searching, applying templates, and auto-switching modes and loading pinned models in `internal/ui/app.go`.
-- Wired memory subcommands (`list`, `add`, `forget`, `clear`) in `cmd/lmhub/main.go`.
+- Wired memory subcommands (`list`, `add`, `forget`, `clear`) in `cmd/lmh/`.
 - Verified build compiles cleanly and 100% of unit tests pass.
 
 ### 2026-06-18 (Phase 5 RAG & Embeddings Complete)
@@ -68,7 +79,7 @@ Any AI coding agent working on the LM Hub codebase **MUST** strictly adhere to t
 - Created `Retriever` executing semantic queries, cosine similarity ranking, and token budget constraints.
 - Wired RAG context injection into Plan and Build modes dynamically.
 - Implemented `Watcher` (fsnotify-based recursive directory file watcher).
-- Integrated `index` CLI subcommands (`--watch`, `--stats`, `--clear`) in `cmd/lmhub/main.go` with auto-load sequence for embedding model.
+- Integrated `index` CLI subcommands (`--watch`, `--stats`, `--clear`) in `cmd/lmh/` with auto-load sequence for embedding model.
 - Addressed static analysis issues: promoted `github.com/fsnotify/fsnotify` and `go.etcd.io/bbolt` to direct dependencies in `go.mod`, and refactored if-else chains to tagged switch statements on `activeView` in `internal/ui/app.go`.
 - Verified build compiles cleanly and 100% of unit tests pass.
 
@@ -136,4 +147,4 @@ For the RAG indexing system, we utilized `bbolt` to store both chunk metadata an
 ## Known Issues & Tech Debt
 
 * **Deferred Named Plan Files**: In Phase 2, Plan mode saves plans using timestamped filenames (e.g., `.lmhub/plan-{timestamp}.json`). Supporting custom-named plans (e.g., `.lmhub/plans/add-jwt-auth.json`) is deferred to a future polish phase.
-* **Language-Aware Chunker (Tree-sitter)**: The RAG system currently uses a token-based sliding window chunker. Implementing recursive tree-sitter AST parsing for Go/Python/JS function/class boundaries is deferred to a future polish phase.
+* **Tree-sitter Chunking (Partial)**: Go-only AST chunking is available behind the `treesitter` build tag (`make build-treesitter`). Multi-language tree-sitter support (Python/JS/TS) remains deferred.

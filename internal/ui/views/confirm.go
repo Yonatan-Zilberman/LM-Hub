@@ -76,10 +76,9 @@ func (cv *ConfirmView) View() string {
 	sb.WriteString("\n")
 	sb.WriteString(theme.HighlightStyle.Render("Proceed with execution? [y] Yes  |  [n/Esc] No\n"))
 
-	modal := lipgloss.NewStyle().
-		Border(lipgloss.DoubleBorder()).
+	modal := theme.FloatingModalStyle.
+		Copy().
 		BorderForeground(levelStyle.GetForeground()).
-		Padding(1, 2).
 		Width(boxWidth).
 		Render(sb.String())
 

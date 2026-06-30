@@ -46,6 +46,7 @@ type InferenceConfig struct {
 
 // ModeInferenceConfig overrides inference params for specific modes.
 type ModeInferenceConfig struct {
+	Ask   InferenceConfig `mapstructure:"ask" yaml:"ask"`
 	Plan  InferenceConfig `mapstructure:"plan" yaml:"plan"`
 	Build InferenceConfig `mapstructure:"build" yaml:"build"`
 }
@@ -178,6 +179,12 @@ func DefaultConfig() Config {
 			RepeatPenalty: 1.1,
 		},
 		ModeInference: ModeInferenceConfig{
+			Ask: InferenceConfig{
+				Temperature:   0.7,
+				MaxTokens:     8192,
+				TopP:          0.95,
+				RepeatPenalty: 1.1,
+			},
 			Plan: InferenceConfig{
 				Temperature:   0.3,
 				MaxTokens:     4096,

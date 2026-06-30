@@ -46,7 +46,7 @@ func (hv *HomeView) View() string {
 	// Boxed menu/instructions
 	instructions := "Press " + theme.HighlightStyle.Render("Ctrl+A") + " to open Ask mode chat\n" +
 		"Press " + theme.HighlightStyle.Render("Ctrl+M") + " to open Model Browser\n" +
-		"Press " + theme.HighlightStyle.Render("Ctrl+I") + " to open Inference Metrics overlay\n" +
+		"Press " + theme.HighlightStyle.Render("Ctrl+G") + " to open Inference Metrics overlay\n" +
 		"Press " + theme.HighlightStyle.Render("Ctrl+L") + " to clear active chat context\n" +
 		"Press " + theme.HighlightStyle.Render("Ctrl+Q") + " to quit the application"
 

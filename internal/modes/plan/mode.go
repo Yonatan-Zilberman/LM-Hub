@@ -91,14 +91,30 @@ func (pm *PlanMode) GeneratePlan(ctx context.Context, modelID, task string, proj
 
 	systemPrompt := agent.RenderPlanPrompt(cwd, osName, shell, allocation.ProjectContext, allocation.MemoryFacts, allocation.RAGChunks, modelID)
 
+	temp := pm.cfg.ModeInference.Plan.Temperature
+	if temp == 0 {
+		temp = pm.cfg.Inference.Temperature
+	}
+	if temp == 0 {
+		temp = 0.5
+	}
+
+	maxToks := pm.cfg.ModeInference.Plan.MaxTokens
+	if maxToks == 0 {
+		maxToks = pm.cfg.Inference.MaxTokens
+	}
+	if maxToks == 0 {
+		maxToks = 8192
+	}
+
 	req := api.ChatRequest{
 		Model: modelID,
 		Messages: []api.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: task},
 		},
-		Temperature: pm.cfg.ModeInference.Plan.Temperature,
-		MaxTokens:   pm.cfg.ModeInference.Plan.MaxTokens,
+		Temperature: temp,
+		MaxTokens:   maxToks,
 		Stream:      false,
 	}
 
@@ -135,8 +151,8 @@ func (pm *PlanMode) GeneratePlan(ctx context.Context, modelID, task string, proj
 			{Role: "assistant", Content: rawResponse},
 			{Role: "user", Content: correctionPrompt},
 		},
-		Temperature: pm.cfg.ModeInference.Plan.Temperature,
-		MaxTokens:   pm.cfg.ModeInference.Plan.MaxTokens,
+		Temperature: temp,
+		MaxTokens:   maxToks,
 		Stream:      false,
 	}
 

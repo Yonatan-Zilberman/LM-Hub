@@ -1,4 +1,7 @@
 # LMHub — Implementation Plan (v2)
+
+> **Documentation note (2026-07):** This plan predates several shipped changes. The primary CLI binary is now **`lmh`** (not `lmhub`). LM Studio APIs use **`/api/v1/`** (not v0). Inference metrics overlay is **`Ctrl+G`** (not Ctrl+I). See [docs/agent.md](agent.md) for the authoritative architecture decisions log.
+
 > A local-first AI agent harness for LM Studio with Ask, Plan, and Build modes.
 > Updated to include: live context window telemetry, RAG/embeddings, inference metrics, project context files, per-tool undo/rollback, persistent agent memory, and prompt template library.
 

@@ -113,7 +113,11 @@ func (tv *TemplatesView) View() string {
 
 	sb.WriteString(tv.textInput.View())
 	sb.WriteString("\n")
-	sb.WriteString(strings.Repeat("─", tv.width-12))
+	divWidth := tv.width
+	if divWidth <= 12 {
+		divWidth = 60
+	}
+	sb.WriteString(strings.Repeat("─", divWidth-12))
 	sb.WriteString("\n\n")
 
 	if len(tv.filtered) == 0 {
@@ -162,12 +166,7 @@ func (tv *TemplatesView) View() string {
 		boxWidth = tv.width - 10
 	}
 
-	modal := lipgloss.NewStyle().
-		Border(lipgloss.DoubleBorder()).
-		BorderForeground(theme.PrimaryColor).
-		Padding(1, 2).
-		Width(boxWidth).
-		Render(sb.String())
+	modal := theme.FloatingModalStyle.Width(boxWidth).Render(sb.String())
 
 	if tv.width > 0 && tv.height > 0 {
 		return lipgloss.Place(tv.width, tv.height, lipgloss.Center, lipgloss.Center, modal)

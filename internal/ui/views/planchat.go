@@ -40,6 +40,7 @@ type PlanChatView struct {
 	errorMsg     string
 	rawResponse  string
 	memManager   *memory.MemoryManager
+	cancel       context.CancelFunc
 }
 
 // NewPlanChatView creates a new PlanChatView.
@@ -95,6 +96,17 @@ func (pcv *PlanChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 	var cmds []tea.Cmd
 
 	if pcv.isGenerating {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC {
+			if pcv.cancel != nil {
+				pcv.cancel()
+				pcv.cancel = nil
+			}
+			pcv.isGenerating = false
+			pcv.errorMsg = "Plan generation cancelled."
+			pcv.viewport.SetContent("Plan generation was cancelled. Enter a new task to try again.")
+			return tea.Batch(cmds...), nil
+		}
+
 		var spinCmd tea.Cmd
 		pcv.spinner, spinCmd = pcv.spinner.Update(msg)
 		cmds = append(cmds, spinCmd)
@@ -147,7 +159,16 @@ func (pcv *PlanChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 // generatePlanCmd calls GeneratePlan in a background goroutine.
 func (pcv *PlanChatView) generatePlanCmd(modelID, task string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		if pcv.cancel != nil {
+			pcv.cancel()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		pcv.cancel = cancel
+		defer func() {
+			cancel()
+			pcv.cancel = nil
+		}()
+
 		var memoryFacts string
 		if pcv.memManager != nil {
 			memoryFacts = pcv.memManager.InjectFacts()
