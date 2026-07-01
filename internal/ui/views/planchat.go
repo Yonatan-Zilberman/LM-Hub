@@ -39,6 +39,7 @@ type PlanChatView struct {
 	projectRoot  string
 	errorMsg     string
 	rawResponse  string
+	epoch        int
 	memManager   *memory.MemoryManager
 	cancel       context.CancelFunc
 }
@@ -123,7 +124,7 @@ func (pcv *PlanChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 			pcv.isGenerating = false
 			pcv.errorMsg = msg.Err.Error()
 			pcv.rawResponse = msg.RawResponse
-			pcv.viewport.SetContent(fmt.Sprintf("❌ Error generating plan: %v\n\nRaw output from model:\n%s", msg.Err, msg.RawResponse))
+			pcv.viewport.SetContent(fmt.Sprintf("%s Error generating plan: %v\n\nRaw output from model:\n%s", styles.SymbolError, msg.Err, msg.RawResponse))
 			pcv.viewport.GotoTop()
 		}
 		return tea.Batch(cmds...), nil
@@ -141,7 +142,8 @@ func (pcv *PlanChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 			pcv.isGenerating = true
 			pcv.errorMsg = ""
 			pcv.rawResponse = ""
-			cmds = append(cmds, pcv.spinner.Tick, pcv.generatePlanCmd(modelID, task))
+			pcv.epoch++
+			cmds = append(cmds, pcv.spinner.Tick, pcv.generatePlanCmd(modelID, task, pcv.epoch))
 		}
 	}
 
@@ -157,7 +159,7 @@ func (pcv *PlanChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 }
 
 // generatePlanCmd calls GeneratePlan in a background goroutine.
-func (pcv *PlanChatView) generatePlanCmd(modelID, task string) tea.Cmd {
+func (pcv *PlanChatView) generatePlanCmd(modelID, task string, targetEpoch int) tea.Cmd {
 	return func() tea.Msg {
 		if pcv.cancel != nil {
 			pcv.cancel()
@@ -165,8 +167,10 @@ func (pcv *PlanChatView) generatePlanCmd(modelID, task string) tea.Cmd {
 		ctx, cancel := context.WithCancel(context.Background())
 		pcv.cancel = cancel
 		defer func() {
+			if pcv.epoch == targetEpoch {
+				pcv.cancel = nil
+			}
 			cancel()
-			pcv.cancel = nil
 		}()
 
 		var memoryFacts string
@@ -174,6 +178,9 @@ func (pcv *PlanChatView) generatePlanCmd(modelID, task string) tea.Cmd {
 			memoryFacts = pcv.memManager.InjectFacts()
 		}
 		p, raw, err := pcv.planMode.GeneratePlan(ctx, modelID, task, pcv.projectRoot, "", memoryFacts)
+		if pcv.epoch != targetEpoch {
+			return nil // Stale response
+		}
 		if err != nil {
 			return PlanErrorMsg{Err: err, RawResponse: raw}
 		}

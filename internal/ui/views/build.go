@@ -232,14 +232,14 @@ func (bv *BuildView) handleAgentStep(msg build.AgentStepMsg) {
 	switch msg.StepType {
 	case "thought":
 		if msg.Content == "Thinking..." {
-			bv.accumulatedThoughts.WriteString("\n🤖 [Thinking...]\n")
+			bv.accumulatedThoughts.WriteString(fmt.Sprintf("\n%s\n", styles.SymbolThinking))
 		} else {
 			bv.accumulatedThoughts.WriteString(msg.Content)
 		}
 		bv.refreshViewport()
 
 	case "tool_call":
-		bv.accumulatedThoughts.WriteString(fmt.Sprintf("\n🛠️  Executing tool: **%s** with args: `%v`\n", msg.ToolName, msg.ToolArgs))
+		bv.accumulatedThoughts.WriteString(fmt.Sprintf("\n%s Executing tool: **%s** with args: `%v`\n", styles.SymbolTool, msg.ToolName, msg.ToolArgs))
 		bv.refreshViewport()
 
 	case "tool_result":
@@ -248,7 +248,7 @@ func (bv *BuildView) handleAgentStep(msg build.AgentStepMsg) {
 		if len(resultPreview) > 200 {
 			resultPreview = resultPreview[:200] + "... (truncated)"
 		}
-		bv.accumulatedThoughts.WriteString(fmt.Sprintf("📝 Result: *%s*\n", resultPreview))
+		bv.accumulatedThoughts.WriteString(fmt.Sprintf("%s Result: *%s*\n", styles.SymbolMessage, resultPreview))
 		bv.refreshViewport()
 
 		if msg.ToolName == "git_diff" {
@@ -257,15 +257,15 @@ func (bv *BuildView) handleAgentStep(msg build.AgentStepMsg) {
 		}
 
 	case "finished":
-		bv.accumulatedThoughts.WriteString("\n🏁 **Agent Finished**\n")
+		bv.accumulatedThoughts.WriteString(fmt.Sprintf("\n%s **Agent Finished**\n", styles.SymbolFinished))
 		bv.refreshViewport()
 
 	case "error":
-		bv.accumulatedThoughts.WriteString(fmt.Sprintf("\n❌ **Error**: %s\n", msg.Content))
+		bv.accumulatedThoughts.WriteString(fmt.Sprintf("\n%s **Error**: %s\n", styles.SymbolError, msg.Content))
 		bv.refreshViewport()
 
 	case "warning":
-		bv.accumulatedThoughts.WriteString(fmt.Sprintf("\n⚠️  **Warning**: %s\n", msg.Content))
+		bv.accumulatedThoughts.WriteString(fmt.Sprintf("\n%s **Warning**: %s\n", styles.SymbolWarning, msg.Content))
 		bv.refreshViewport()
 	}
 }
@@ -290,7 +290,7 @@ func (bv *BuildView) renderToolActivity() string {
 	theme := styles.DefaultTheme
 
 	// 1. Session Scope & Stats Panel
-	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.PrimaryColor).Render("📊 SESSION METRICS\n"))
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.PrimaryColor).Render("[=] SESSION METRICS\n"))
 	sb.WriteString(fmt.Sprintf("Scope: %s\n", session.ScopeRoot))
 	sb.WriteString(fmt.Sprintf("Iteration: %d/%d\n", session.GetIteration(), session.MaxIterations))
 
@@ -304,19 +304,19 @@ func (bv *BuildView) renderToolActivity() string {
 	// 2. Plan Progress Panel (if plan exists)
 	planRef := session.GetPlan()
 	if planRef != nil {
-		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.AccentColor).Render("📋 PLAN PROGRESS\n"))
+		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.AccentColor).Render("[=] PLAN PROGRESS\n"))
 		sb.WriteString(fmt.Sprintf("Plan: %s\n", planRef.Title))
 		currentStep := session.GetCurrentStep()
 
 		// Render step-by-step progress
 		for i, step := range planRef.Steps {
-			statusSymbol := "○" // Pending
+			statusSymbol := "[ ]" // Pending
 			statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
 			if i < currentStep {
-				statusSymbol = "✓" // Done
+				statusSymbol = "[x]" // Done
 				statusStyle = lipgloss.NewStyle().Foreground(theme.SuccessColor).Bold(true)
 			} else if i == currentStep {
-				statusSymbol = "➔" // Active
+				statusSymbol = "->" // Active
 				statusStyle = lipgloss.NewStyle().Foreground(theme.SecondaryColor).Bold(true)
 			}
 
@@ -328,12 +328,12 @@ func (bv *BuildView) renderToolActivity() string {
 	// 3. Tool Execution History Panel
 	history := session.GetToolCallHistory()
 	if len(history) > 0 {
-		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.AccentColor).Render("🛠️  TOOL HISTORY\n"))
+		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(theme.AccentColor).Render(fmt.Sprintf("%s TOOL HISTORY\n", styles.SymbolTool)))
 		for i, record := range history {
-			statusIcon := "✓"
+			statusIcon := "[x]"
 			statusColor := theme.SuccessColor
 			if strings.Contains(strings.ToLower(record.Result), "error") || strings.Contains(strings.ToLower(record.Result), "failed") {
-				statusIcon = "✗"
+				statusIcon = "[err]"
 				statusColor = theme.DangerColor
 			}
 

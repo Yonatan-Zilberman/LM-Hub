@@ -64,7 +64,7 @@ func (uv *UndoHistoryView) View() string {
 			marker := "  "
 			style := theme.NormalTextStyle
 			if i == uv.selectedIndex {
-				marker = "➔ "
+				marker = "-> "
 				style = theme.HighlightStyle
 			}
 

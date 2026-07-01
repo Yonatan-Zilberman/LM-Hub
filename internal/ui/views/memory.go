@@ -158,7 +158,7 @@ func (mv *MemoryView) View() string {
 		marker := "  "
 		style := theme.NormalTextStyle
 		if idx == mv.selectedIndex {
-			marker = "➔ "
+			marker = "-> "
 			style = theme.HighlightStyle
 		}
 

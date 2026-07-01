@@ -37,9 +37,10 @@ type ModeModelsConfig struct {
 }
 
 // InferenceConfig specifies default hyperparameters for model execution.
+// Note: max_tokens / context window size is NOT configured here — it is set in LM Studio
+// when loading a model. LMH reads context_length from the loaded model instance.
 type InferenceConfig struct {
 	Temperature   float64 `mapstructure:"temperature" yaml:"temperature"`
-	MaxTokens     int     `mapstructure:"max_tokens" yaml:"max_tokens"`
 	TopP          float64 `mapstructure:"top_p" yaml:"top_p"`
 	RepeatPenalty float64 `mapstructure:"repeat_penalty" yaml:"repeat_penalty"`
 }
@@ -168,32 +169,30 @@ func DefaultConfig() Config {
 			EmbeddingModel:        "text-embedding-nomic-embed-text-v1.5",
 		},
 		ModeModels: ModeModelsConfig{
+			// All empty: LMH will use whatever model is currently loaded in LM Studio.
+			// Set these to specific model keys only if you want automatic model switching per mode.
 			Ask:   "",
-			Plan:  "qwen/qwen3.6-27b",
-			Build: "qwen/qwen3.6-35b-a3b",
+			Plan:  "",
+			Build: "",
 		},
 		Inference: InferenceConfig{
 			Temperature:   0.7,
-			MaxTokens:     8192,
 			TopP:          0.95,
 			RepeatPenalty: 1.1,
 		},
 		ModeInference: ModeInferenceConfig{
 			Ask: InferenceConfig{
 				Temperature:   0.7,
-				MaxTokens:     8192,
 				TopP:          0.95,
 				RepeatPenalty: 1.1,
 			},
 			Plan: InferenceConfig{
 				Temperature:   0.3,
-				MaxTokens:     4096,
 				TopP:          0.95,
 				RepeatPenalty: 1.1,
 			},
 			Build: InferenceConfig{
 				Temperature:   0.5,
-				MaxTokens:     8192,
 				TopP:          0.95,
 				RepeatPenalty: 1.1,
 			},

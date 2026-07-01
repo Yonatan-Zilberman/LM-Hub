@@ -22,6 +22,7 @@ type LayoutConfig struct {
 	Width         int
 	Height        int
 	ContentWidth  int
+	ContentHeight int
 	SidebarWidth  int
 	SidebarHeight int
 	ShowSidebar   bool
@@ -37,11 +38,18 @@ func NewLayoutManager() *LayoutManager {
 
 // Compute returns layout dimensions for the given view and terminal size.
 func (lm *LayoutManager) Compute(activeView ActiveView, width, height int, isLoadingModel bool) LayoutConfig {
+	chromeBudget := 2 + 6 // header height (2) + footer/status bars height (6)
+	contentHeight := height - chromeBudget
+	if contentHeight < 10 {
+		contentHeight = 10
+	}
+
 	cfg := LayoutConfig{
 		Kind:          LayoutSingle,
 		Width:         width,
 		Height:        height,
 		ContentWidth:  width,
+		ContentHeight: contentHeight,
 		SidebarWidth:  30,
 		SidebarHeight: height - 10,
 	}

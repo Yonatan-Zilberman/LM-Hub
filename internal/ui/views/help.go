@@ -52,10 +52,14 @@ func (hv *HelpView) View() string {
 	for _, s := range shortcuts {
 		key := lipgloss.NewStyle().Foreground(theme.AccentColor).Bold(true).Width(10).Render(s[0])
 		desc := theme.NormalTextStyle.Render(s[1])
-		sb.WriteString(key + " " + desc + "\n")
+		sb.WriteString(key)
+		sb.WriteString(" ")
+		sb.WriteString(desc)
+		sb.WriteString("\n")
 	}
 
-	sb.WriteString("\n" + theme.HighlightStyle.Render("Slash Commands (Input box):\n"))
+	sb.WriteString("\n")
+	sb.WriteString(theme.HighlightStyle.Render("Slash Commands (Input box):\n"))
 	slashCmds := [][]string{
 		{"/save [name]", "Save conversation history to disk"},
 		{"/load <id>", "Restore a saved conversation session by ID"},
@@ -68,7 +72,10 @@ func (hv *HelpView) View() string {
 	for _, sc := range slashCmds {
 		cmd := lipgloss.NewStyle().Foreground(theme.SecondaryColor).Bold(true).Width(15).Render(sc[0])
 		desc := theme.NormalTextStyle.Render(sc[1])
-		sb.WriteString(cmd + " " + desc + "\n")
+		sb.WriteString(cmd)
+		sb.WriteString(" ")
+		sb.WriteString(desc)
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("\n")

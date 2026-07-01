@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/yonatanzilberman/lmhub/internal/api"
+	"github.com/yonatanzilberman/lmhub/internal/config"
 )
 
 // Manager coordinates the loading, unloading, and auto-switching of models.
@@ -145,4 +146,109 @@ func (m *Manager) updateMetricsFromModel(model api.ModelInfo) {
 		ramGB := float64(model.SizeBytes) / (1024 * 1024 * 1024)
 		m.metrics.UpdateTelemetry(model.Key, ctxLen, 0, ramGB)
 	}
+}
+
+// GetLoadedContextLength returns the context window size of the currently loaded model.
+// It reads context_length from the loaded instance config (set by LM Studio on load),
+// falling back to the model's MaxContextLength metadata. Returns 0 if no model is loaded.
+func (m *Manager) GetLoadedContextLength(modelKey string) int {
+	models := m.registry.List()
+	for _, model := range models {
+		if modelKey != "" && model.Key != modelKey {
+			continue
+		}
+		if len(model.LoadedInstances) > 0 {
+			inst := model.LoadedInstances[0]
+			if configCtx, ok := inst.Config["context_length"].(float64); ok && configCtx > 0 {
+				return int(configCtx)
+			}
+			if model.MaxContextLength > 0 {
+				return model.MaxContextLength
+			}
+		}
+	}
+	// Fall back to metrics cache if registry not yet refreshed
+	metrics := m.metrics.Get()
+	if metrics.ContextLimit > 0 {
+		return metrics.ContextLimit
+	}
+	return 0
+}
+
+// GetFirstLoadedModelID returns the key of the first loaded model in the registry,
+// or an empty string if no model is loaded.
+func (m *Manager) GetFirstLoadedModelID() string {
+	models := m.registry.List()
+	for _, model := range models {
+		if len(model.LoadedInstances) > 0 {
+			return model.Key
+		}
+	}
+	return ""
+}
+
+// ResolveAndEnsureModel determines which model to use for a given mode and ensures it is loaded.
+// Priority: preferredKey > cfg.ModeModels.<mode> > first loaded model > error.
+// Passing contextLength=0 lets LM Studio use its configured context window size.
+func (m *Manager) ResolveAndEnsureModel(ctx context.Context, mode, preferredKey string, cfg *config.Config, statusChan chan<- string) (string, error) {
+	// Refresh registry to get current state
+	if err := m.registry.Refresh(ctx); err != nil {
+		// Non-fatal: continue with cached state
+		if statusChan != nil {
+			statusChan <- fmt.Sprintf("Warning: registry refresh failed: %v", err)
+		}
+	}
+
+	targetKey := preferredKey
+	if targetKey == "" && cfg != nil {
+		switch mode {
+		case "ask":
+			targetKey = cfg.ModeModels.Ask
+		case "plan":
+			targetKey = cfg.ModeModels.Plan
+		case "build":
+			targetKey = cfg.ModeModels.Build
+		}
+	}
+
+	// If no pin configured, use whatever is already loaded
+	if targetKey == "" {
+		loaded := m.GetFirstLoadedModelID()
+		if loaded != "" {
+			// Update metrics from the loaded model
+			models := m.registry.List()
+			for _, model := range models {
+				if model.Key == loaded {
+					m.updateMetricsFromModel(model)
+					break
+				}
+			}
+			return loaded, nil
+		}
+		return "", fmt.Errorf("no model loaded in LM Studio and no model pin configured for %s mode — load a model in LM Studio or press Ctrl+M to select one", mode)
+	}
+
+	// Ensure the pinned model is loaded (pass contextLength=0 to let LM Studio decide)
+	if err := m.EnsureModel(ctx, targetKey, 0, statusChan); err != nil {
+		return "", fmt.Errorf("failed to load model %q: %w", targetKey, err)
+	}
+	return targetKey, nil
+}
+
+// ResolveCompletionMaxTokens computes the max_tokens for a chat completion request.
+// It takes the model's context window size and the current prompt token count,
+// leaving a safety reserve so the model has room to generate.
+func ResolveCompletionMaxTokens(ctxLen, promptTokens int) int {
+	const safetyReserve = 256
+	const minCompletion = 512
+
+	if ctxLen <= 0 {
+		// Unknown context size — use a safe default
+		return 4096
+	}
+	budget := ctxLen - promptTokens - safetyReserve
+	if budget < minCompletion {
+		budget = minCompletion
+	}
+	return budget
 }

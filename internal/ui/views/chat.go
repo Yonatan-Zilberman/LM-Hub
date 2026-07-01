@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -43,10 +44,12 @@ type ChatView struct {
 	isStreaming bool
 	stream      <-chan api.StreamChunk
 	memManager  *memory.MemoryManager
-	
-	// Streaming metrics
+	projectRoot string
+
+	// Streaming metrics and state
 	CurrentSpeed float64
 	CurrentTTFT  int
+	streamBuffer strings.Builder
 
 	// Log warnings/trim messages
 	StatusLog string
@@ -56,12 +59,12 @@ type ChatView struct {
 }
 
 // NewChatView creates a new ChatView instance.
-func NewChatView(am *ask.AskMode, mm *memory.MemoryManager) (*ChatView, error) {
+func NewChatView(am *ask.AskMode, mm *memory.MemoryManager, projectRoot string) (*ChatView, error) {
 	ti := textinput.New()
 	ti.Placeholder = "Type a message and press Enter..."
 	ti.Focus()
 	ti.Prompt = " > "
-	
+
 	mr, err := components.NewMarkdownRenderer()
 	if err != nil {
 		return nil, err
@@ -76,6 +79,7 @@ func NewChatView(am *ask.AskMode, mm *memory.MemoryManager) (*ChatView, error) {
 		viewport:   vp,
 		renderer:   mr,
 		memManager: mm,
+		projectRoot: projectRoot,
 	}, nil
 }
 
@@ -158,6 +162,7 @@ func (cv *ChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 			// Clear text input
 			cv.textInput.SetValue("")
 			cv.isStreaming = true
+			cv.streamBuffer.Reset()
 			cv.StatusLog = "Waiting for model..."
 
 			// Start streaming logic
@@ -169,6 +174,8 @@ func (cv *ChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 		cv.CurrentTTFT = msg.TTFTMs
 		cv.StatusLog = fmt.Sprintf("Streaming... Speed: %.1f tok/s | TTFT: %dms", msg.TokSpeed, msg.TTFTMs)
 		
+		cv.streamBuffer.WriteString(msg.Content)
+		
 		// Update viewport content dynamically
 		cv.refreshContent()
 		
@@ -179,6 +186,7 @@ func (cv *ChatView) Update(msg tea.Msg, modelID string) (tea.Cmd, error) {
 
 	case ChatDoneMsg:
 		cv.isStreaming = false
+		cv.streamBuffer.Reset()
 		cv.StatusLog = "Response complete."
 		cv.refreshContent()
 
@@ -212,13 +220,13 @@ func (cv *ChatView) startChatStreamCmd(modelID, text string) tea.Cmd {
 		if cv.memManager != nil {
 			memoryFacts = cv.memManager.InjectFacts()
 		}
-		stream, logMsg, err := cv.askMode.SendUserMessage(ctx, modelID, text, ".", "macOS", "zsh", "", memoryFacts, 0.0, 0)
+		stream, logMsg, err := cv.askMode.SendUserMessage(ctx, modelID, text, cv.projectRoot, runtime.GOOS, "zsh", "", memoryFacts, 0.0)
 		if err != nil {
 			return ChatErrorMsg{Err: err}
 		}
 
 		if logMsg != "" {
-			// Simple feedback
+			cv.viewport.SetContent(cv.viewport.View() + "\n\n> [!WARNING]\n> " + logMsg + "\n\n")
 		}
 
 		// Read from the streaming channel asynchronously and dispatch messages
@@ -288,8 +296,28 @@ func (cv *ChatView) refreshContent() {
 		sb.WriteString("\n")
 	}
 
+	// Append the active stream buffer if we are currently streaming
+	if cv.isStreaming && cv.streamBuffer.Len() > 0 {
+		roleStyle := lipgloss.NewStyle().Foreground(styles.DefaultTheme.PrimaryColor).Bold(true)
+		sb.WriteString(fmt.Sprintf("%s\n", roleStyle.Render("LM Hub")))
+		
+		rendered, err := cv.renderer.Render(cv.streamBuffer.String() + " █")
+		if err != nil {
+			sb.WriteString(cv.streamBuffer.String())
+			sb.WriteString(" █")
+		} else {
+			sb.WriteString(rendered)
+		}
+		sb.WriteString("\n")
+	}
+
 	cv.viewport.SetContent(sb.String())
 	cv.viewport.GotoBottom()
+}
+
+// History returns the conversation history from Ask mode.
+func (cv *ChatView) History() []api.Message {
+	return cv.askMode.History()
 }
 
 // View renders the chat screen.

@@ -208,6 +208,20 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 	}
 
 	go func() {
+		// Resolve the model and ensure it's loaded before proceeding
+		resolvedModelID, err := bm.modelManager.ResolveAndEnsureModel(ctx, "build", modelID, bm.cfg, nil)
+		if err != nil {
+			if bm.updateCallback != nil {
+				bm.updateCallback(AgentStepMsg{
+					StepType: "error",
+					Content:  fmt.Sprintf("Failed to resolve model: %v", err),
+					Done:     true,
+				})
+			}
+			return
+		}
+		modelID = resolvedModelID
+
 		// Retrieve RAG chunks matching the task if enabled
 		var ragChunks string
 		if bm.retriever != nil && bm.cfg.RAG.Enabled {
@@ -222,7 +236,7 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 			}
 		}
 
-		// First step: add the user task if history is empty
+		// Add the user task to history
 		bm.mu.Lock()
 		histEmpty := len(bm.history) == 0
 		if histEmpty {
@@ -233,12 +247,18 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 					Role:    "user",
 					Content: fmt.Sprintf("Please execute Step 1 of our plan:\nDescription: %s\nTarget: %s", step.Description, step.Target),
 				})
-			} else {
+			} else if task != "" {
 				bm.history = append(bm.history, api.Message{
 					Role:    "user",
 					Content: task,
 				})
 			}
+		} else if task != "" {
+			// Append follow-up task
+			bm.history = append(bm.history, api.Message{
+				Role:    "user",
+				Content: task,
+			})
 		}
 		bm.mu.Unlock()
 
@@ -335,7 +355,8 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 				return
 			}
 
-			if ctxResult.Action == agent.ContextNeedsSummarize {
+			switch ctxResult.Action {
+			case agent.ContextNeedsSummarize:
 				bm.mu.Unlock()
 				err := bm.summarizeHistory(ctx, modelID)
 				bm.mu.Lock()
@@ -356,7 +377,7 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 						bm.history = trimRes.Messages
 					}
 				}
-			} else if ctxResult.Action == agent.ContextTrimmed {
+			case agent.ContextTrimmed:
 				bm.history = ctxResult.Messages
 			}
 
@@ -381,16 +402,11 @@ func (bm *BuildMode) ExecuteTask(ctx context.Context, modelID, task, projectCont
 				resolvedTemp = 0.5
 			}
 
-			resolvedMaxToks := maxToks
-			if resolvedMaxToks == 0 {
-				resolvedMaxToks = bm.cfg.ModeInference.Build.MaxTokens
-			}
-			if resolvedMaxToks == 0 {
-				resolvedMaxToks = bm.cfg.Inference.MaxTokens
-			}
-			if resolvedMaxToks == 0 {
-				resolvedMaxToks = 8192
-			}
+			// Derive max_tokens from the loaded model's context window
+			bm.mu.Lock()
+			promptTokenCount := bm.contextManager.CountMessagesTokens(bm.history) + bm.contextManager.CountTokens(systemPrompt)
+			bm.mu.Unlock()
+			resolvedMaxToks := modelmanager.ResolveCompletionMaxTokens(limit, promptTokenCount)
 
 			req := api.ChatRequest{
 				Model:       modelID,

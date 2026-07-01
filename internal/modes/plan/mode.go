@@ -3,7 +3,6 @@ package plan
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"strings"
 
@@ -59,6 +58,13 @@ func (pm *PlanMode) ResetParseFailures() {
 // and parses the response. If parsing fails, it retries once with a correction prompt.
 // It returns the parsed Plan, the raw model output (useful for debugging/UI), and any error.
 func (pm *PlanMode) GeneratePlan(ctx context.Context, modelID, task string, projectRoot string, ragChunks string, memoryFacts string) (*Plan, string, error) {
+	// Resolve the model and ensure it's loaded before proceeding
+	resolvedModelID, err := pm.modelManager.ResolveAndEnsureModel(ctx, "plan", modelID, pm.cfg, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	modelID = resolvedModelID
+
 	// If RAG is enabled, retrieve relevant chunks for the task automatically if not pre-provided
 	if ragChunks == "" && pm.retriever != nil && pm.cfg.RAG.Enabled {
 		retrieved, err := pm.retriever.Retrieve(ctx, task, pm.cfg.RAG.TopK, pm.cfg.RAG.MaxTokens)
@@ -81,13 +87,13 @@ func (pm *PlanMode) GeneratePlan(ctx context.Context, modelID, task string, proj
 	// Allocate budget
 	allocation := pm.budgetManager.Allocate(projectCtx, memoryFacts, ragChunks)
 
-	// Get system characteristics
-	cwd, err := os.Getwd()
-	if err != nil {
+	// Get system characteristics — use projectRoot, not os.Getwd()
+	cwd := projectRoot
+	if cwd == "" {
 		cwd = "."
 	}
 	osName := runtime.GOOS
-	shell := "zsh" // default to zsh, or standard shell
+	shell := "zsh" // default; platform-specific overrides can be added later
 
 	systemPrompt := agent.RenderPlanPrompt(cwd, osName, shell, allocation.ProjectContext, allocation.MemoryFacts, allocation.RAGChunks, modelID)
 
@@ -99,13 +105,9 @@ func (pm *PlanMode) GeneratePlan(ctx context.Context, modelID, task string, proj
 		temp = 0.5
 	}
 
-	maxToks := pm.cfg.ModeInference.Plan.MaxTokens
-	if maxToks == 0 {
-		maxToks = pm.cfg.Inference.MaxTokens
-	}
-	if maxToks == 0 {
-		maxToks = 8192
-	}
+	// Derive max_tokens from the loaded model's context window (set in LM Studio)
+	ctxLen := pm.modelManager.GetLoadedContextLength(modelID)
+	maxToks := modelmanager.ResolveCompletionMaxTokens(ctxLen, 0) // 0 prompt tokens as estimate for plan
 
 	req := api.ChatRequest{
 		Model: modelID,

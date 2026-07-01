@@ -30,16 +30,12 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("mode_models.build", defaultCfg.ModeModels.Build)
 
 	v.SetDefault("inference.temperature", defaultCfg.Inference.Temperature)
-	v.SetDefault("inference.max_tokens", defaultCfg.Inference.MaxTokens)
 	v.SetDefault("inference.top_p", defaultCfg.Inference.TopP)
 	v.SetDefault("inference.repeat_penalty", defaultCfg.Inference.RepeatPenalty)
 
 	v.SetDefault("mode_inference.ask.temperature", defaultCfg.ModeInference.Ask.Temperature)
-	v.SetDefault("mode_inference.ask.max_tokens", defaultCfg.ModeInference.Ask.MaxTokens)
 	v.SetDefault("mode_inference.plan.temperature", defaultCfg.ModeInference.Plan.Temperature)
-	v.SetDefault("mode_inference.plan.max_tokens", defaultCfg.ModeInference.Plan.MaxTokens)
 	v.SetDefault("mode_inference.build.temperature", defaultCfg.ModeInference.Build.Temperature)
-	v.SetDefault("mode_inference.build.max_tokens", defaultCfg.ModeInference.Build.MaxTokens)
 
 	v.SetDefault("agent.max_iterations", defaultCfg.Agent.MaxIterations)
 	v.SetDefault("agent.context_warn_pct", defaultCfg.Agent.ContextWarnPct)
@@ -206,26 +202,25 @@ lmstudio:
   embedding_model: "text-embedding-nomic-embed-text-v1.5"
 
 mode_models:
+  # Leave empty to use whatever model is currently loaded in LM Studio.
+  # Set to a specific model key (e.g. "qwen/qwen3-8b") to enable automatic
+  # model switching when entering that mode.
   ask:   ""
-  plan:  "qwen/qwen3.6-27b"
-  build: "qwen/qwen3.6-35b-a3b"
+  plan:  ""
+  build: ""
 
 inference:
   temperature: 0.7
-  max_tokens: 8192
   top_p: 0.95
   repeat_penalty: 1.1
 
 mode_inference:
   ask:
     temperature: 0.7
-    max_tokens: 8192
   plan:
     temperature: 0.3
-    max_tokens: 4096
   build:
     temperature: 0.5
-    max_tokens: 8192
 
 agent:
   max_iterations: 15

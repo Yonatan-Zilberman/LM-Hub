@@ -45,15 +45,15 @@ func init() {
 	DefaultTheme = Theme{
 		PrimaryColor:   lipgloss.Color("#888888"), // Muted Gray
 		SecondaryColor: lipgloss.Color("#555555"), // Darker Muted Gray
-		AccentColor:    lipgloss.Color("#00d2ff"), // Bright Cyan Accent
-		BgColor:        lipgloss.Color("#161616"), // Very Dark Charcoal BG
+		AccentColor:    lipgloss.Color("#d4d4d4"), // Neutral Gray Accent
+		BgColor:        lipgloss.Color("#121212"), // Slightly Darker Charcoal BG
 		FgColor:        lipgloss.Color("#cccccc"), // Soft Gray Fg
 		
 		SuccessColor: lipgloss.Color("#22aa55"), // Green
 		WarningColor: lipgloss.Color("#ddaa22"), // Orange/Yellow
 		DangerColor:  lipgloss.Color("#cc3333"), // Red
 		
-		BorderColor: lipgloss.Color("#333333"), // Dark gray borders
+		BorderColor: lipgloss.Color("#2a2a2a"), // Dark gray borders
 	}
 
 	theme := &DefaultTheme

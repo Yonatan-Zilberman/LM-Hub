@@ -98,7 +98,6 @@ type App struct {
 	helpView        *views.HelpView
 
 	// AskUser state
-	showAskUser     bool
 	askUserMsg      safety.AskUserMsg
 
 	// Warning banners
@@ -125,7 +124,7 @@ func NewApp(
 	tmplLib *templates.Library,
 	projectRoot string,
 ) (*App, error) {
-	chat, err := views.NewChatView(am, memManager)
+	chat, err := views.NewChatView(am, memManager, projectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +194,7 @@ func NewApp(
 		templateLibrary: tmplLib,
 		templatesView:   views.NewTemplatesView(tmplLib),
 		helpView:        views.NewHelpView(),
-		activeView:      ViewHome,
+		activeView:      ViewChat,
 		isOnline:        false,
 		projectRoot:     projectRoot,
 		layout:          NewLayoutManager(),
@@ -207,12 +206,12 @@ func NewApp(
 			Question:     question,
 			ResponseChan: ch,
 		}
-		app.showAskUser = true
+		app.overlays.ShowAskUser = true
 		app.buildView.SetWaitingForUser(true)
 
 		// Wait blocks the background execution loop until user sets the channel response
 		answer := <-ch
-		app.showAskUser = false
+		app.overlays.ShowAskUser = false
 		app.buildView.SetWaitingForUser(false)
 		return answer, nil
 	}
@@ -247,8 +246,23 @@ func NewApp(
 
 // Init initializes the application.
 func (a *App) Init() tea.Cmd {
-	// First check online status and start watcher
-	return a.checkOnlineStatusCmd()
+	// First check online status, start watcher, and resolve initial model
+	return tea.Batch(
+		a.checkOnlineStatusCmd(),
+		a.resolveInitialModelCmd(),
+	)
+}
+
+func (a *App) resolveInitialModelCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		modelID, err := a.modelManager.ResolveAndEnsureModel(ctx, "ask", a.selectedModelID, a.cfg, nil)
+		if err == nil && modelID != "" {
+			return views.ModelLoadDoneMsg{ModelID: modelID}
+		}
+		return nil
+	}
 }
 
 // checkOnlineStatusCmd returns a command checking if server is active.
@@ -288,8 +302,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.overlays.ShowConfirm = false
 				}
 			}
+			return a, nil
 		}
-		return a, nil
 	}
 
 	// 2. Check Undo History Modal overlay input
@@ -326,8 +340,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					})
 				}
 			}
+			return a, tea.Batch(cmds...)
 		}
-		return a, tea.Batch(cmds...)
 	}
 
 	// 3. Check Memory Fact Center overlay input
@@ -345,7 +359,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, tea.Batch(cmds...)
 		}
-		return a, nil
 	}
 
 	// 4. Check Prompt Templates Browser overlay input
@@ -364,7 +377,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, tea.Batch(cmds...)
 		}
-		return a, nil
 	}
 
 	// Help overlay input handling
@@ -373,8 +385,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyCtrlH {
 				a.overlays.ShowHelp = false
 			}
+			return a, nil
 		}
-		return a, nil
 	}
 
 	switch msg := msg.(type) {
@@ -384,19 +396,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		layoutCfg := a.layout.Compute(a.activeView, msg.Width, msg.Height, a.isLoadingModel)
 		contentWidth := layoutCfg.ContentWidth
+		contentHeight := layoutCfg.ContentHeight
 
 		a.statusBar.SetWidth(msg.Width)
 		a.contextBar.SetWidth(msg.Width)
-		a.homeView.SetSize(contentWidth, msg.Height)
-		a.chatView.SetSize(contentWidth, msg.Height)
-		a.planChatView.SetSize(contentWidth, msg.Height)
-		a.planView.SetSize(contentWidth, msg.Height)
-		a.buildView.SetSize(contentWidth, msg.Height)
-		a.modelSelectView.SetSize(msg.Width, msg.Height)
-		a.metricsView.SetSize(msg.Width, msg.Height)
-		a.memoryView.SetSize(msg.Width, msg.Height)
-		a.templatesView.SetSize(msg.Width, msg.Height)
-		a.helpView.SetSize(msg.Width, msg.Height)
+		a.homeView.SetSize(contentWidth, contentHeight)
+		a.chatView.SetSize(contentWidth, contentHeight)
+		a.planChatView.SetSize(contentWidth, contentHeight)
+		a.planView.SetSize(contentWidth, contentHeight)
+		a.buildView.SetSize(contentWidth, contentHeight)
+		a.modelSelectView.SetSize(msg.Width, contentHeight)
+		a.metricsView.SetSize(msg.Width, contentHeight)
+		a.memoryView.SetSize(msg.Width, contentHeight)
+		a.templatesView.SetSize(msg.Width, contentHeight)
+		a.helpView.SetSize(msg.Width, contentHeight)
 
 		if a.confirmView != nil {
 			a.confirmView.SetSize(msg.Width, msg.Height)
@@ -442,13 +455,39 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.activeView = ViewPlan
 
 	case views.PlanApproveMsg:
-		a.activeView = ViewChat
-		a.chatView.Reset()
-		a.chatView.StatusLog = fmt.Sprintf("Plan approved and saved as %s. Ready to build!", msg.Filename)
+		// Plan approved: switch to Build mode and load the plan
+		a.activeView = ViewBuild
+		if msg.Filename != "" {
+			if loadedPlan, err := a.buildMode.LoadPlan(msg.Filename); err == nil {
+				sess := a.buildMode.Session()
+				if sess == nil {
+					a.buildMode.Reset()
+					sess = a.buildMode.Session()
+				}
+				if sess != nil {
+					sess.PlanRef = loadedPlan
+					sess.SetCurrentStep(0)
+				}
+				a.chatView.StatusLog = fmt.Sprintf("Plan approved! Loaded %s into Build mode. Ready to execute.", msg.Filename)
+			} else {
+				a.chatView.StatusLog = fmt.Sprintf("Plan approved and saved as %s. Switch to Build mode to execute.", msg.Filename)
+			}
+		} else {
+			a.chatView.StatusLog = "Plan approved! Ready to build."
+		}
+		// Switch model if build model pin differs
+		buildModel := a.cfg.ModeModels.Build
+		if buildModel != "" && buildModel != a.selectedModelID {
+			a.isLoadingModel = true
+			a.modelLoadStatus = fmt.Sprintf("Auto-switching to Build mode model: %s...", buildModel)
+			a.modelStatusChan = make(chan string, 10)
+			cmds = append(cmds, a.loadModelCmd(buildModel))
+			cmds = append(cmds, a.readNextModelStatusCmd())
+		}
 
 	case views.PlanRejectMsg:
 		a.activeView = ViewPlanChat
-		a.planChatView.Reset()
+		// Don't reset — keep the previous conversation so user can refine
 
 	case tea.KeyMsg:
 		if a.parseWarningMsg != "" {
@@ -458,7 +497,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		if a.showAskUser {
+		if a.overlays.ShowAskUser {
 			if a.activeView == ViewBuild {
 				if msg.Type == tea.KeyEnter {
 					answer := a.buildView.TextInput().Value()
@@ -466,7 +505,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, nil
 				}
 				if msg.Type == tea.KeyCtrlC {
-					a.showAskUser = false
+					a.overlays.ShowAskUser = false
 					a.buildView.SetWaitingForUser(false)
 					a.askUserMsg.ResponseChan <- ""
 				}
@@ -480,6 +519,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if a.cfg.Sessions.AutoSave {
 				_ = a.SaveCurrentSession("")
 			}
+			a.extractMemory()
 			return a, tea.Quit
 
 		case tea.KeyCtrlS:
@@ -487,27 +527,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				a.chatView.StatusLog = fmt.Sprintf("Error saving session: %v", err)
 			} else {
-				a.chatView.StatusLog = "Session saved successfully to .lmhub/sessions/"
+				a.chatView.StatusLog = "Session saved."
 			}
+			a.extractMemory()
+			return a, nil
 
 		case tea.KeyCtrlA:
 			if a.activeView != ViewChat {
 				a.activeView = ViewChat
-				a.chatView.Reset()
+				// Don't reset — preserve conversation history
 			}
 
 		case tea.KeyCtrlP:
 			if a.activeView != ViewPlanChat && a.activeView != ViewPlan {
 				a.activeView = ViewPlanChat
-				a.planChatView.Reset()
-				
+				// Don't reset — preserve plan history
+
 				planModel := a.cfg.ModeModels.Plan
 				if planModel != "" && planModel != a.selectedModelID {
 					a.isLoadingModel = true
 					a.modelLoadStatus = fmt.Sprintf("Auto-switching to Plan mode model: %s...", planModel)
 					a.modelStatusChan = make(chan string, 10)
-					
-					cmds = append(cmds, a.loadModelCmd(planModel, 8192))
+
+					cmds = append(cmds, a.loadModelCmd(planModel))
 					cmds = append(cmds, a.readNextModelStatusCmd())
 				}
 			}
@@ -515,7 +557,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlB:
 			if a.activeView != ViewBuild {
 				a.activeView = ViewBuild
-				a.buildView.Reset()
+				// Don't reset — preserve build history
 
 				buildModel := a.cfg.ModeModels.Build
 				if buildModel != "" && buildModel != a.selectedModelID {
@@ -523,7 +565,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.modelLoadStatus = fmt.Sprintf("Auto-switching to Build mode model: %s...", buildModel)
 					a.modelStatusChan = make(chan string, 10)
 
-					cmds = append(cmds, a.loadModelCmd(buildModel, 32768))
+					cmds = append(cmds, a.loadModelCmd(buildModel))
 					cmds = append(cmds, a.readNextModelStatusCmd())
 				}
 			}
@@ -663,7 +705,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.isLoadingModel = true
 				a.modelLoadStatus = fmt.Sprintf("Auto-switching to Plan mode model: %s...", planModel)
 				a.modelStatusChan = make(chan string, 10)
-				cmds = append(cmds, a.loadModelCmd(planModel, 8192))
+				cmds = append(cmds, a.loadModelCmd(planModel))
 				cmds = append(cmds, a.readNextModelStatusCmd())
 			}
 		case "build":
@@ -676,15 +718,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.isLoadingModel = true
 				a.modelLoadStatus = fmt.Sprintf("Auto-switching to Build mode model: %s...", buildModel)
 				a.modelStatusChan = make(chan string, 10)
-				cmds = append(cmds, a.loadModelCmd(buildModel, 32768))
+				cmds = append(cmds, a.loadModelCmd(buildModel))
 				cmds = append(cmds, a.readNextModelStatusCmd())
 			}
 		}
 		return a, tea.Batch(cmds...)
 
 	case views.BuildChannelReaderMsg:
-		gitStatus := ""
-		projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
+		gitStatus := a.getGitStatus()
+		projectContext, _ := agent.LoadProjectContext(a.projectRoot, a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
 		memoryFacts := ""
 		if a.memoryManager != nil {
 			memoryFacts = a.memoryManager.InjectFacts()
@@ -696,8 +738,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if agent.GlobalParseMetrics.ShouldWarn() {
 			a.parseWarningMsg = fmt.Sprintf("Model %s is producing unreliable tool calls (3+ consecutive failures). Consider switching models.", a.selectedModelID)
 		}
-		gitStatus := ""
-		projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
+		gitStatus := a.getGitStatus()
+		projectContext, _ := agent.LoadProjectContext(a.projectRoot, a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
 		memoryFacts := ""
 		if a.memoryManager != nil {
 			memoryFacts = a.memoryManager.InjectFacts()
@@ -719,8 +761,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd, _ := a.planView.Update(msg)
 			cmds = append(cmds, cmd)
 		case ViewBuild:
-			gitStatus := ""
-			projectContext, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
+			gitStatus := a.getGitStatus()
+			projectContext, _ := agent.LoadProjectContext(a.projectRoot, a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
 			memoryFacts := ""
 			if a.memoryManager != nil {
 				memoryFacts = a.memoryManager.InjectFacts()
@@ -738,40 +780,42 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (a *App) cycleModesCmd() tea.Cmd {
 	var cmds []tea.Cmd
+	a.parseWarningMsg = "" // Clear stale warnings on mode switch
 	switch a.activeView {
 	case ViewChat:
 		a.activeView = ViewPlanChat
-		a.planChatView.Reset()
+		// Don't reset — preserve conversation history
 		planModel := a.cfg.ModeModels.Plan
 		if planModel != "" && planModel != a.selectedModelID {
 			a.isLoadingModel = true
 			a.modelLoadStatus = fmt.Sprintf("Auto-switching to Plan mode model: %s...", planModel)
 			a.modelStatusChan = make(chan string, 10)
-			cmds = append(cmds, a.loadModelCmd(planModel, 8192))
+			cmds = append(cmds, a.loadModelCmd(planModel))
 			cmds = append(cmds, a.readNextModelStatusCmd())
 		}
 	case ViewPlanChat, ViewPlan:
 		a.activeView = ViewBuild
-		a.buildView.Reset()
+		// Don't reset — preserve build history
 		buildModel := a.cfg.ModeModels.Build
 		if buildModel != "" && buildModel != a.selectedModelID {
 			a.isLoadingModel = true
 			a.modelLoadStatus = fmt.Sprintf("Auto-switching to Build mode model: %s...", buildModel)
 			a.modelStatusChan = make(chan string, 10)
-			cmds = append(cmds, a.loadModelCmd(buildModel, 32768))
+			cmds = append(cmds, a.loadModelCmd(buildModel))
 			cmds = append(cmds, a.readNextModelStatusCmd())
 		}
 	default:
 		a.activeView = ViewChat
-		a.chatView.Reset()
+		// Don't reset — preserve conversation history
 	}
 	return tea.Batch(cmds...)
 }
 
-func (a *App) loadModelCmd(key string, contextLength int) tea.Cmd {
+func (a *App) loadModelCmd(key string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		err := a.modelManager.EnsureModel(ctx, key, contextLength, a.modelStatusChan)
+		// Always pass 0 for context length — let LM Studio use its configured setting
+		err := a.modelManager.EnsureModel(ctx, key, 0, a.modelStatusChan)
 		close(a.modelStatusChan)
 		if err != nil {
 			return views.ModelLoadErrorMsg{Err: err}
@@ -837,7 +881,7 @@ func (a *App) View() string {
 	if a.isLoadingModel {
 		content = lipgloss.JoinVertical(lipgloss.Center,
 			"\n\n\n",
-			"🤖 Model Auto-Swapping...",
+			"  " + styles.SymbolThinking + " Model Auto-Swapping...",
 			theme.SubtitleStyle.Render(a.modelLoadStatus),
 			"\n\n\n",
 		)
@@ -868,9 +912,9 @@ func (a *App) View() string {
 		mainLayout = a.layout.JoinContentAndSidebar(content, sidebar, layoutCfg)
 	}
 
-	// 4. Context Bar (Visible in Chat and Build screens)
+	// 4. Context Bar (Visible in Chat, Build, and Plan screens)
 	ctxBar := ""
-	if (a.activeView == ViewChat || a.activeView == ViewBuild) && a.cfg.UI.ShowContextBar {
+	if (a.activeView == ViewChat || a.activeView == ViewBuild || a.activeView == ViewPlanChat || a.activeView == ViewPlan) && a.cfg.UI.ShowContextBar {
 		m := a.modelManager.Metrics().Get()
 		sysTokens := 400  // baseline estimate
 
@@ -937,7 +981,7 @@ func (a *App) View() string {
 		if a.width > 0 {
 			bannerStyle = bannerStyle.Width(a.width)
 		}
-		banner := bannerStyle.Render("⚠️  " + a.parseWarningMsg + " (Press any key to dismiss)")
+		banner := bannerStyle.Render(styles.SymbolWarning + "  " + a.parseWarningMsg + " (Press any key to dismiss)")
 		res = lipgloss.JoinVertical(lipgloss.Left,
 			header,
 			"\n",
@@ -991,6 +1035,13 @@ func (a *App) View() string {
 		a.helpView.SetSize(0, 0)
 		modal = a.helpView.View()
 		a.helpView.SetSize(a.width, a.height)
+	} else if a.overlays.ShowAskUser {
+		theme := styles.DefaultTheme
+		title := theme.TitleStyle.Render("Agent Action Requires Input")
+		content := fmt.Sprintf("%s\n\n%s", a.askUserMsg.Question, a.buildView.TextInput().View())
+		modal = theme.FloatingModalStyle.Render(
+			lipgloss.JoinVertical(lipgloss.Left, title, "", content),
+		)
 	}
 
 	if modal != "" {
@@ -1012,7 +1063,7 @@ func (a *App) SaveCurrentSession(customName string) error {
 	}
 
 	if a.activeView == ViewChat {
-		a.currentSession.Messages = a.chatView.AskMode().History()
+		a.currentSession.Messages = a.chatView.History()
 
 		// Capture context injection metadata (RAG & memory) for debuggability
 		var memoryFacts []string
@@ -1118,10 +1169,10 @@ func (a *App) LoadSession(nameOrID string) error {
 func (a *App) renderSidebar(width, height int) string {
 	theme := styles.DefaultTheme
 
-	status := "● Offline"
+	status := fmt.Sprintf("%s Offline", styles.SymbolOffline)
 	statusStyle := lipgloss.NewStyle().Foreground(theme.DangerColor)
 	if a.isOnline {
-		status = "● Online"
+		status = fmt.Sprintf("%s Online", styles.SymbolOnline)
 		statusStyle = lipgloss.NewStyle().Foreground(theme.SuccessColor)
 	}
 
@@ -1174,10 +1225,10 @@ func (a *App) renderSidebar(width, height int) string {
 			if len(stepTitle) > width-8 {
 				stepTitle = stepTitle[:width-11] + "..."
 			}
-			activityLines = append(activityLines, lipgloss.NewStyle().Foreground(theme.AccentColor).Render(fmt.Sprintf("➜ Step %d/%d", sess.CurrentStep+1, len(sess.PlanRef.Steps))))
+			activityLines = append(activityLines, lipgloss.NewStyle().Foreground(theme.AccentColor).Render(fmt.Sprintf("%s Step %d/%d", styles.SymbolArrow, sess.CurrentStep+1, len(sess.PlanRef.Steps))))
 			activityLines = append(activityLines, "  "+stepTitle)
 		} else {
-			activityLines = append(activityLines, "➜ Running task...")
+			activityLines = append(activityLines, fmt.Sprintf("%s Running task...", styles.SymbolArrow))
 		}
 
 		// Tool calls history
@@ -1194,7 +1245,7 @@ func (a *App) renderSidebar(width, height int) string {
 				if len(name) > width-6 {
 					name = name[:width-9] + "..."
 				}
-				activityLines = append(activityLines, fmt.Sprintf("  ✔ %s", name))
+				activityLines = append(activityLines, fmt.Sprintf("  %s %s", styles.SymbolCheck, name))
 			}
 		}
 	} else if a.chatView != nil && a.chatView.StatusLog != "" {
@@ -1202,7 +1253,7 @@ func (a *App) renderSidebar(width, height int) string {
 		if len(logText) > width-6 {
 			logText = logText[:width-9] + "..."
 		}
-		activityLines = append(activityLines, "💬 "+logText)
+		activityLines = append(activityLines, fmt.Sprintf("%s %s", styles.SymbolMessage, logText))
 	} else {
 		activityLines = append(activityLines, "Ready.")
 	}
@@ -1222,7 +1273,7 @@ func (a *App) renderSidebar(width, height int) string {
 
 
 func (a *App) updateCachedContext() {
-	projectCtx, _ := agent.LoadProjectContext(".", a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
+	projectCtx, _ := agent.LoadProjectContext(a.projectRoot, a.contextManager, a.cfg.ContextBudget.ProjectContextMaxTokens)
 	memFacts := ""
 	if a.memoryManager != nil {
 		memFacts = a.memoryManager.InjectFacts()
@@ -1235,3 +1286,30 @@ func (a *App) updateCachedContext() {
 	a.lastCacheTime = time.Now()
 }
 
+// getGitStatus runs git status --porcelain and returns the output, or empty string on error.
+func (a *App) getGitStatus() string {
+	cmd := exec.Command("git", "-C", a.projectRoot, "status", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// extractMemory analyzes the Ask mode conversation history and stores long-term facts.
+func (a *App) extractMemory() {
+	if a.memoryManager == nil || a.activeView != ViewChat {
+		return
+	}
+	history := a.chatView.History()
+	if len(history) < 2 {
+		return // Not enough context to extract
+	}
+	
+	// Create a short-lived context for background extraction
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	go func() {
+		defer cancel()
+		_ = a.memoryManager.ExtractAndStore(ctx, a.selectedModelID, history)
+	}()
+}

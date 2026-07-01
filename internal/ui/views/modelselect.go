@@ -113,9 +113,9 @@ func (mv *ModelSelectView) Update(msg tea.Msg) (tea.Cmd, error) {
 				mv.isLoading = true
 				mv.loadStatus = "Initializing model load..."
 				mv.statusChan = make(chan string, 10)
-				
-				// Standard context length default to 8192 for local loading
-				cmds = append(cmds, mv.loadModelCmd(selectedModel.Key, 8192))
+
+				// Pass contextLength=0 so LM Studio uses its configured context window size
+				cmds = append(cmds, mv.loadModelCmd(selectedModel.Key, 0))
 				cmds = append(cmds, mv.readNextStatusCmd())
 			}
 		}
@@ -163,7 +163,7 @@ func (mv *ModelSelectView) View() string {
 	theme := styles.DefaultTheme
 
 	var sb strings.Builder
-	sb.WriteString(theme.TitleStyle.Render("🤖 Model Browser (LM Studio)"))
+	sb.WriteString(theme.TitleStyle.Render("Model Browser (LM Studio)"))
 	sb.WriteString("\n")
 	sb.WriteString(theme.HelpStyle.Render("Use [↑↓] or [kj] to navigate, [Enter] to Load/Unload, [Ctrl+M] to close"))
 	sb.WriteString("\n\n")
@@ -186,7 +186,7 @@ func (mv *ModelSelectView) View() string {
 		prefix := "  "
 		style := theme.NormalTextStyle
 		if i == mv.selectedIndex {
-			prefix = "❯ "
+			prefix = styles.SymbolArrow + " "
 			style = theme.HighlightStyle
 		}
 

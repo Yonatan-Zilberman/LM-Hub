@@ -140,7 +140,7 @@ func (tv *TemplatesView) View() string {
 			marker := "  "
 			style := theme.NormalTextStyle
 			if i == tv.selectedIndex {
-				marker = "➔ "
+				marker = "-> "
 				style = theme.HighlightStyle
 			}
 

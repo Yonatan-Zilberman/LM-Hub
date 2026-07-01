@@ -62,7 +62,15 @@ func (am *AskMode) AddMessage(msg api.Message) {
 
 // SendUserMessage sends a user message and yields response stream chunks.
 // It automatically manages context and renders the system prompt.
-func (am *AskMode) SendUserMessage(ctx context.Context, modelID string, text string, cwd, osName, shell, projectContext, memoryFacts string, temp float64, maxToks int) (<-chan api.StreamChunk, string, error) {
+// max_tokens for the completion request is derived from the loaded model's context window.
+func (am *AskMode) SendUserMessage(ctx context.Context, modelID string, text string, cwd, osName, shell, projectContext, memoryFacts string, temp float64) (<-chan api.StreamChunk, string, error) {
+	// Resolve the model and ensure it's loaded before proceeding
+	resolvedModelID, err := am.modelManager.ResolveAndEnsureModel(ctx, "ask", modelID, am.cfg, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	modelID = resolvedModelID
+
 	// Add user message to history
 	am.history = append(am.history, api.Message{
 		Role:    "user",
@@ -139,16 +147,9 @@ func (am *AskMode) SendUserMessage(ctx context.Context, modelID string, text str
 		resolvedTemp = 0.7
 	}
 
-	resolvedMaxToks := maxToks
-	if resolvedMaxToks == 0 {
-		resolvedMaxToks = am.cfg.ModeInference.Ask.MaxTokens
-	}
-	if resolvedMaxToks == 0 {
-		resolvedMaxToks = am.cfg.Inference.MaxTokens
-	}
-	if resolvedMaxToks == 0 {
-		resolvedMaxToks = 8192
-	}
+	// Derive max_tokens from the model's actual context window (set in LM Studio)
+	promptTokens := am.contextManager.CountMessagesTokens(reqMessages)
+	resolvedMaxToks := modelmanager.ResolveCompletionMaxTokens(limit, promptTokens)
 
 	// Create request
 	req := api.ChatRequest{
@@ -162,6 +163,10 @@ func (am *AskMode) SendUserMessage(ctx context.Context, modelID string, text str
 	// Stream chat response
 	stream, err := am.client.ChatCompletionStream(ctx, req)
 	if err != nil {
+		// Roll back the user message on error
+		if len(am.history) > 0 {
+			am.history = am.history[:len(am.history)-1]
+		}
 		return nil, result.Log, fmt.Errorf("failed to start streaming response: %w", err)
 	}
 
@@ -173,9 +178,14 @@ func (am *AskMode) SendUserMessage(ctx context.Context, modelID string, text str
 
 		for chunk := range stream {
 			if chunk.Error != nil {
+				// Roll back the user message on stream error
+				if len(am.history) > 0 {
+					am.history = am.history[:len(am.history)-1]
+				}
 				outChan <- chunk
 				return
 			}
+
 
 			if chunk.Content != "" {
 				sb.WriteString(chunk.Content)

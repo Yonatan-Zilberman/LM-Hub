@@ -17,11 +17,12 @@ type OverlayManager struct {
 	ShowMemory      bool
 	ShowTemplates   bool
 	ShowHelp        bool
+	ShowAskUser     bool
 }
 
 // AnyActive reports whether any overlay modal is currently visible.
 func (o *OverlayManager) AnyActive() bool {
-	return o.ShowConfirm || o.ShowUndoHistory || o.ShowMemory || o.ShowTemplates || o.ShowHelp
+	return o.ShowConfirm || o.ShowUndoHistory || o.ShowMemory || o.ShowTemplates || o.ShowHelp || o.ShowAskUser
 }
 
 // CloseAll dismisses every overlay.
@@ -31,6 +32,7 @@ func (o *OverlayManager) CloseAll() {
 	o.ShowMemory = false
 	o.ShowTemplates = false
 	o.ShowHelp = false
+	o.ShowAskUser = false
 }
 
 // RenderModal centers a modal on top of a dimmed background.

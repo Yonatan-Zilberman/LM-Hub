@@ -14,6 +14,23 @@ run: build
 test:
 	go test ./... -v
 
+test-unit:
+	go test ./internal/config/... ./internal/modelmanager/... -count=1 -v
+
+test-api:
+	go test ./internal/api/... -count=1 -v
+
+test-modes:
+	go test ./internal/modes/... -count=1 -v
+
+test-cli:
+	go test ./cmd/lmh/... -count=1 -v
+
+test-all: test-unit test-api test-modes test-cli
+
+qa-smoke:
+	./scripts/qa-manual.sh
+
 test-treesitter:
 	go test -tags treesitter ./... -v
 

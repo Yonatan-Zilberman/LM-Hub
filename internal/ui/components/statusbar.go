@@ -32,7 +32,7 @@ func (sb *StatusBar) Render(mode string, model string, ramUsed float64, speed fl
 	modeStyle := theme.ModeBadgeStyle
 	if mode == "build" {
 		modeStyle = modeStyle.Copy().Background(theme.SecondaryColor)
-	} else if mode == "plan" {
+	} else if strings.HasPrefix(mode, "plan") {
 		modeStyle = modeStyle.Copy().Background(theme.AccentColor)
 	}
 	modeSection := modeStyle.Render(modeText)
@@ -72,7 +72,7 @@ func (sb *StatusBar) Render(mode string, model string, ramUsed float64, speed fl
 
 	// Dynamic middle filler
 	filler := lipgloss.NewStyle().
-		Background(lipgloss.Color("#21222c")).
+		Background(theme.BgColor).
 		Render(strings.Repeat(" ", remainingSpace))
 
 	return lipgloss.JoinHorizontal(lipgloss.Bottom,

@@ -1,6 +1,5 @@
 # LMH (LM-Hub)
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/Yonatan-Zilberman/LM-Hub)](https://goreportcard.com/report/github.com/Yonatan-Zilberman/LM-Hub)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/Yonatan-Zilberman/LM-Hub)](https://golang.org)
 
@@ -84,7 +83,7 @@ Press `Ctrl+A` for Ask mode, type a question, and press Enter.
 
 1. **Download & Install**: Visit [lmstudio.ai](https://lmstudio.ai) and download the app for your OS.
 2. **Download Models**:
-   - A chat/instruction model (e.g., `Qwen/Qwen2.5-7B-Instruct-GGUF`)
+   - A chat/instruction model (e.g., `Qwen/Qwen3.6-27b-Instruct-GGUF`)
    - An embedding model (e.g., `nomic-ai/nomic-embed-text-v1.5-GGUF`) for RAG
 3. **Start the Local Server**:
    - Open the **Local Server** tab in LM Studio
@@ -223,19 +222,19 @@ lmstudio:
 
 mode_models:
   ask: ""
-  plan: "qwen/qwen3.6-27b"
-  build: "qwen/qwen3.6-35b-a3b"
+  plan: ""
+  build: ""
 
 mode_inference:
   ask:
     temperature: 0.7
-    max_tokens: 8192
   plan:
     temperature: 0.3
-    max_tokens: 4096
   build:
     temperature: 0.5
-    max_tokens: 8192
+
+# Note: The context window length is determined dynamically 
+# from the model loaded in LM Studio. No max_tokens config is required.
 
 rag:
   enabled: true
